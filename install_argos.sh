@@ -116,6 +116,8 @@ step "4/7 — Dependencies..."
 "$VPY" -m pip install --upgrade pip --quiet
 info "Installing core deps..."
 "$VPY" -m pip install -e "." --quiet 2>&1 | tail -3
+info "Installing Brain API deps (flask, flask-cors, openai)..."
+"$VPY" -m pip install flask flask-cors openai --quiet 2>&1 | tail -3 || warn "Brain API deps failed"
 info "Installing extras (voice, telegram, iot, vision, ml-local)..."
 "$VPY" -m pip install -e ".[voice,telegram,iot,vision,ml-local]" --quiet 2>&1 | tail -3 || warn "Some extras failed (non-critical)"
 info "Dependencies installed"
