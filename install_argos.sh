@@ -7,7 +7,7 @@
 # ============================================================================
 set -euo pipefail
 
-ARGOS_REPO="https://github.com/poilopr57-a11y/Argos.git"
+ARGOS_REPO="${ARGOS_REPO_URL:-https://github.com/winargos42-dotcom/Argos-1.git}"
 ARGOS_BRANCH="main"
 INSTALL_DIR="${ARGOS_INSTALL_DIR:-$HOME/argos}"
 NODE_NAME=""
