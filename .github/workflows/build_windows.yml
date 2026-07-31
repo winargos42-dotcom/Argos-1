@@ -71,8 +71,10 @@ jobs:
           pip install --upgrade pip
           pip install pyinstaller
           pip install requests fastapi uvicorn python-dotenv openai
+          pip install psutil cryptography pyserial beautifulsoup4 python-telegram-bot
+          pip install customtkinter pyttsx3 SpeechRecognition google-genai || echo "Some optional deps skipped"
         # Kivy is GUI-only and heavy; the app gracefully falls back to terminal mode
-        # on Windows without it.
+        # on Windows without it. Hidden imports for missing packages are non-fatal.
 
       - name: Create missing data directories
         # PyInstaller spec references config/, assets/, .env — create if absent
