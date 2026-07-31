@@ -168,7 +168,7 @@ def _ensure_language_level(toolchain):
 
 
 def before_apk_build(toolchain):
-    """Called by p4a before APK assembly – extra safety-net to patch pyjnius."""
+    """Called by p4a after manifest generation but before Gradle build."""
     try:
         _ensure_language_level(toolchain)
         arch_obj = getattr(toolchain, 'archs', [None])[0]
@@ -177,26 +177,28 @@ def before_apk_build(toolchain):
             fix_jni_typedef(arch_obj)
             disable_broken_modules(arch_obj)
         _disable_android_incompatible_modules(toolchain)
+
+        # Inject FileProvider into manifest + create res/xml/file_paths.xml
+        # BEFORE Gradle runs so the resource is available during build.
+        for candidate_dir in ("src/main", "."):
+            if Path(candidate_dir, "AndroidManifest.xml").exists():
+                add_file_provider(candidate_dir)
+                dist_dir = Path(candidate_dir).parent if candidate_dir != "." else "."
+                add_file_paths_xml(dist_dir)
+                print("[p4a_hook] FileProvider + file_paths.xml injected before Gradle")
+                break
+        else:
+            print("[p4a_hook] before_apk_build: AndroidManifest.xml not found yet")
     except Exception as exc:
         print(f"[p4a_hook] before_apk_build warning: {exc}")
 
 
 def after_apk_build(toolchain):
-    """Called by p4a after manifest generation but before Gradle assembly.
-
-    Injects the FileProvider <provider> element inside <application> in the
-    generated AndroidManifest.xml.  Using android.extra_manifest_xml in
-    buildozer places XML at manifest root level, causing:
-        error: unexpected element <provider> found in <manifest>
-    This hook patches the manifest directly so <provider> is correctly nested
-    under <application>.
-    """
-    # p4a renders the manifest to src/main/AndroidManifest.xml relative to
-    # the dist directory (which is the current working directory for hooks).
+    """Called by p4a after Gradle build – ensure FileProvider is present."""
+    # Safety net: if before_apk_build didn't find the manifest, try again.
     for candidate_dir in ("src/main", "."):
         if Path(candidate_dir, "AndroidManifest.xml").exists():
             add_file_provider(candidate_dir)
-            # Create res/xml/file_paths.xml required by the FileProvider
             dist_dir = Path(candidate_dir).parent if candidate_dir != "." else "."
             add_file_paths_xml(dist_dir)
             return
