@@ -109,12 +109,14 @@ def add_file_provider(build_dir):
 
 
 def add_file_paths_xml(dist_dir):
-    """Создаёт res/xml/file_paths.xml в дистрибутиве."""
-    xml_dir = Path(dist_dir) / "res" / "xml"
-    xml_dir.mkdir(parents=True, exist_ok=True)
-    file_paths = xml_dir / "file_paths.xml"
-    if not file_paths.exists():
-        file_paths.write_text('''<?xml version="1.0" encoding="utf-8"?>
+    """Создаёт res/xml/file_paths.xml в дистрибутиве (Gradle src/main/res)."""
+    # Gradle Android project expects resources under src/main/res/
+    for res_base in (Path(dist_dir) / "src" / "main" / "res", Path(dist_dir) / "res"):
+        xml_dir = res_base / "xml"
+        xml_dir.mkdir(parents=True, exist_ok=True)
+        file_paths = xml_dir / "file_paths.xml"
+        if not file_paths.exists():
+            file_paths.write_text('''<?xml version="1.0" encoding="utf-8"?>
 <paths xmlns:android="http://schemas.android.com/apk/res/android">
     <external-path name="external_files" path="." />
     <files-path name="internal_files" path="." />
@@ -123,7 +125,7 @@ def add_file_paths_xml(dist_dir):
     <external-files-path name="external_app_files" path="." />
 </paths>
 ''', encoding="utf-8")
-        print("[p4a_hook] file_paths.xml создан")
+            print(f"[p4a_hook] file_paths.xml создан в {xml_dir}")
 
 
 def source_dirs(arch):
