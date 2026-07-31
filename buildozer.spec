@@ -48,6 +48,9 @@ android.add_src = res
 # Enable Android features
 android.accept_sdk_license = True
 
+# AndroidX core library (required by FileProvider)
+android.gradle_dependencies = androidx.core:core:1.10.1
+
 # Icons
 icon.filename = %(source.dir)s/assets/argos_icon_512.png
 
