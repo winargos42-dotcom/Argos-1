@@ -87,5 +87,3 @@ EXACT_REPLACEMENTS = [
     ('RuntimeState(data)', 'RuntimeState(**data)'),
     ('RuntimeState(asdict(self.state))', 'RuntimeState(**asdict(self.state))'),
 ]
-
-OLLAMA_SNIPPET = 
