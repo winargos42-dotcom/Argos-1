@@ -11,7 +11,7 @@ source.dir = .
 source.main = main_kivy.py
 source.include_exts = py,png,jpg,jpeg,kv,atlas,json,txt,md,xml
 source.include_patterns = assets/*,config/*,res/*
-source.exclude_dirs = argos_deploy/tmp,argos_deploy/backups,.git,.venv,.buildozer,p4a-recipes,__pycache__,tests,scripts,docs,installer,reports,artifacts
+source.exclude_dirs = argos_deploy,.git,.venv,.buildozer,p4a-recipes,__pycache__,tests,scripts,docs,installer,reports,artifacts
 
 # Requirements
 requirements = hostpython3,python3,kivy==2.3.1,requests,pyjnius==1.6.1,android,paho-mqtt,python-dotenv
