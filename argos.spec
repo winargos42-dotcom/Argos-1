@@ -33,7 +33,6 @@ exe = EXE(
     codesign_identity=None,
     entitlements_file=None,
     icon=['assets\\argos_icon.ico'],
-    manifest='assets\\argos.manifest',
 )
 coll = COLLECT(
     exe,
