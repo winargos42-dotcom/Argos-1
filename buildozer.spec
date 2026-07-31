@@ -34,7 +34,7 @@ android.permissions = INTERNET,BLUETOOTH_ADMIN,NFC,READ_EXTERNAL_STORAGE,WRITE_E
 # Android API / NDK / SDK
 android.api = 33
 android.minapi = 24
-android.ndk = 23b
+android.ndk = 25b
 android.archs = arm64-v8a
 
 # [FIX-SAI-FILEPROVIDER]
