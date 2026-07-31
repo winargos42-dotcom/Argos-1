@@ -18,8 +18,8 @@ ArchitecturesAllowed=x64
 ArchitecturesInstallIn64BitMode=x64
 
 [Files]
-Source: "dist\argos\argos.exe"; DestDir: "{app}"; Flags: ignoreversion
-Source: "dist\argos\_internal\*"; DestDir: "{app}\_internal"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "..\dist\argos\argos.exe"; DestDir: "{app}"; Flags: ignoreversion
+Source: "..\dist\argos\_internal\*"; DestDir: "{app}\_internal"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Icons]
 Name: "{group}\ARGOS"; Filename: "{app}\{#MyAppExeName}"
