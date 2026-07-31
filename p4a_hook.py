@@ -194,6 +194,9 @@ def after_apk_build(toolchain):
     for candidate_dir in ("src/main", "."):
         if Path(candidate_dir, "AndroidManifest.xml").exists():
             add_file_provider(candidate_dir)
+            # Create res/xml/file_paths.xml required by the FileProvider
+            dist_dir = Path(candidate_dir).parent if candidate_dir != "." else "."
+            add_file_paths_xml(dist_dir)
             return
 
     print("[p4a_hook] after_apk_build: AndroidManifest.xml not found in expected locations, skipping FileProvider injection")
