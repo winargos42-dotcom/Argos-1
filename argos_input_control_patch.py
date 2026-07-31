@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 """
 argos_input_control_patch.py
 Патч управления мышью и клавиатурой через ARGOS/Telegram.
