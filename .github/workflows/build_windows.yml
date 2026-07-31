@@ -74,6 +74,22 @@ jobs:
         # Kivy is GUI-only and heavy; the app gracefully falls back to terminal mode
         # on Windows without it.
 
+      - name: Create missing data directories
+        # PyInstaller spec references config/, assets/, .env — create if absent
+        shell: python
+        run: |
+          from pathlib import Path
+          for d in ["config", "assets"]:
+              p = Path(d)
+              if not p.exists():
+                  p.mkdir(parents=True, exist_ok=True)
+                  (p / ".gitkeep").write_text("")
+                  print(f"Created {d}/")
+          env = Path(".env")
+          if not env.exists():
+              env.write_text("# ARGOS env — fill in your keys\n")
+              print("Created .env")
+
       - name: Build ARGOS.exe with PyInstaller
         run: |
           pyinstaller argos.spec
