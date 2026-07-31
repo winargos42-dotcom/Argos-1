@@ -17,6 +17,17 @@ main.py — ArgosUniversal OS v2.1.3
 
 import os
 import sys
+
+# === Android/Kivy detection ===
+# На Android — делегируем в main_kivy.py (Kivy UI entry point)
+if 'ANDROID_ARGUMENT' in os.environ or 'ANDROID_PRIVATE' in os.environ:
+    _ROOT = os.path.dirname(os.path.abspath(__file__))
+    if _ROOT not in sys.path:
+        sys.path.insert(0, _ROOT)
+    from main_kivy import main as _kivy_main
+    _kivy_main()
+    sys.exit(0)
+
 import signal
 import threading
 import datetime
