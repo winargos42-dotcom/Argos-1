@@ -1,365 +1,197 @@
 """
-evolution.py — Модуль саморазвития Аргоса
-  Пишет, проверяет и внедряет новые навыки в src/skills/
-  Перед принятием запускает Feedback Loop (Code Review) и Unit-тест.
+content_gen.py — Медиа-Архитектор
+  Сбор AI-новостей через RSS + генерация поста + публикация в Telegram
 """
 
+SKILL_DESCRIPTION = "Генерация контента: тексты, посты, статьи через LLM"
+
 import os
-import ast
-import re
-import sys
 import json
-import tempfile
-import subprocess
-import importlib
+import time
+import threading
+import xml.etree.ElementTree as ET
+from pathlib import Path
 
-SKILLS_DIR = "src/skills"
-TESTS_GEN_DIR = "tests/generated"
-
-HARD_SKILL_SYSTEM_PROMPT = (
-    "Ты генератор Python-кода для production. "
-    "Запрещено возвращать пояснения, markdown, блоки ``` и любой текст вне Python-кода. "
-    "Выводи только валидный, запускаемый Python-модуль."
-)
-
-HARD_TEST_SYSTEM_PROMPT = (
-    "Ты генератор unit-тестов Python для production. "
-    "Выводи только валидный код unittest без markdown и без пояснений."
-)
+try:
+    import requests
+    _REQUESTS_OK = True
+except ImportError:
+    _REQUESTS_OK = False
 
 
-TRIGGERS = ["эволюция", "создай навык", "разработай навык", "новый навык", "генерируй skill", "evolution", "create skill", "generate skill", "develop skill"]
+class ContentGen:
+    # Файл персистентной очереди публикаций
+    _QUEUE_FILE = Path(__file__).resolve().parent.parent.parent / "data" / "publish_queue.json"
 
+    # RSS-источники — работают без JavaScript, не блокируют парсеры
+    RSS_SOURCES = [
+        {"name": "MIT Tech Review AI", "url": "https://www.technologyreview.com/feed/"},
+        {"name": "VentureBeat AI",     "url": "https://venturebeat.com/category/ai/feed/"},
+        {"name": "TechCrunch AI",      "url": "https://techcrunch.com/category/artificial-intelligence/feed/"},
+        {"name": "The Verge AI",       "url": "https://www.theverge.com/rss/ai-artificial-intelligence/index.xml"},
+        {"name": "Ars Technica AI",    "url": "https://feeds.arstechnica.com/arstechnica/technology-lab"},
+        {"name": "Wired AI",           "url": "https://www.wired.com/feed/tag/ai/latest/rss"},
+    ]
 
-class ArgosEvolution:
-    def __init__(self, ai_core=None):
-        self.core = ai_core  # ArgosCore для генерации кода
+    HEADERS = {
+        "User-Agent": "Mozilla/5.0 (compatible; ArgosBot/2.0; +https://github.com/argos)",
+        "Accept": "application/rss+xml, application/xml, text/xml, */*",
+    }
 
-    def setup(self, core=None):
-        if core:
-            self.core = core
-            log.info("Evolution.setup: core=%s has _ask_gemini: %s", type(core).__name__, hasattr(core, '_ask_gemini'))
+    def __init__(self):
+        self._pending = self._load_queue()
+        self._running = False
+        self._tg_token = os.getenv("TELEGRAM_BOT_TOKEN")
+        self._tg_chatid = os.getenv("USER_ID")
 
-    def _sanitize_filename(self, name: str) -> str:
-        raw = (name or "").strip().lower().replace(".py", "")
-        safe = re.sub(r"[^a-z0-9_]", "_", raw)
-        safe = re.sub(r"_+", "_", safe).strip("_")
-        if not safe:
-            safe = "new_skill"
-        return safe
-
-    def _extract_code_only(self, text: str) -> str:
-        payload = (text or "").strip()
-        if payload.startswith("```"):
-            payload = payload.replace("```python", "").replace("```", "").strip()
-        return payload
-
-    def _ensure_executable_skill(self, code: str) -> tuple[bool, str]:
-        text = (code or "").strip()
-        if not text:
-            return False, "пустой код"
-        if "```" in text:
-            return False, "обнаружен markdown fence"
-
+    def _load_queue(self) -> list:
+        """Загружает очередь публикаций из файла."""
         try:
-            tree = ast.parse(text)
-        except SyntaxError as e:
-            return False, f"syntax error: {e}"
-
-        has_class = any(isinstance(n, ast.ClassDef) for n in tree.body)
-        if not has_class:
-            return False, "в модуле должен быть минимум 1 класс"
-
-        risky_calls = {"eval", "exec", "compile", "__import__"}
-        for node in ast.walk(tree):
-            if isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
-                if node.func.id in risky_calls:
-                    return False, f"обнаружен рискованный вызов: {node.func.id}()"
-        return True, "ok"
-
-    def _repair_to_code(self, broken_payload: str, description: str = "") -> str:
-        prompt = (
-            "Исправь ответ и верни только валидный Python-код модуля. "
-            "Удали комментарии-пояснения и markdown.\n"
-            f"Описание навыка: {description}\n"
-            f"Текущий ответ:\n{broken_payload}"
-        )
-        ans = self._ask_ai(HARD_SKILL_SYSTEM_PROMPT, prompt)
-        return self._extract_code_only(ans or "")
-
-    def _extract_json(self, text: str) -> dict | None:
-        candidate = (text or "").strip()
-        if not candidate:
-            return None
-        if candidate.startswith("```"):
-            candidate = candidate.strip("`")
-            candidate = candidate.replace("json", "", 1).strip()
-        try:
-            obj = json.loads(candidate)
-            if isinstance(obj, dict):
-                return obj
+            if self._QUEUE_FILE.exists():
+                return json.loads(self._QUEUE_FILE.read_text(encoding="utf-8"))
         except Exception:
             pass
-        left = candidate.find("{")
-        right = candidate.rfind("}")
-        if left >= 0 and right > left:
-            chunk = candidate[left : right + 1]
-            try:
-                obj = json.loads(chunk)
-                if isinstance(obj, dict):
-                    return obj
-            except Exception:
-                return None
-        return None
+        return []
 
-    def _ask_ai(self, role: str, prompt: str) -> str | None:
-        if not self.core:
-            return None
-        answer = self.core._ask_gemini(role, prompt)
-        if answer:
-            return answer
-        return self.core._ask_ollama(role, prompt)
-
-    def _fallback_test_template(self) -> str:
-        return (
-            "import unittest\n"
-            "import skill_under_test as s\n\n"
-            "class TestGeneratedSkill(unittest.TestCase):\n"
-            "    def test_module_imports(self):\n"
-            "        self.assertIsNotNone(s)\n\n"
-            "if __name__ == '__main__':\n"
-            "    unittest.main()\n"
-        )
-
-    def _generate_unit_test(self, filename: str, code: str, description: str = "") -> str:
-        prompt = (
-            "Сгенерируй unit-тест на Python (unittest) для навыка.\n"
-            "Важно:\n"
-            "- Верни только код, без markdown\n"
-            "- Используй только стандартную библиотеку\n"
-            "- Импортируй тестируемый модуль как: import skill_under_test as s\n"
-            "- Должен быть минимум один тестовый метод test_*\n"
-            "- Тест должен быть детерминированным\n\n"
-            f"Имя навыка: {filename}\n"
-            f"Описание навыка: {description}\n"
-            f"Код навыка:\n{code}"
-        )
-        answer = self._ask_ai(HARD_TEST_SYSTEM_PROMPT, prompt)
-        test_code = self._extract_code_only(answer or "")
-        if not test_code:
-            return self._fallback_test_template()
+    def _save_queue(self):
+        """Сохраняет очередь публикаций в файл."""
         try:
-            ast.parse(test_code)
-        except SyntaxError:
-            return self._fallback_test_template()
-        if "test_" not in test_code:
-            return self._fallback_test_template()
-        if "unittest" not in test_code:
-            return self._fallback_test_template()
-        return test_code
-
-    def _review_patch(
-        self, filename: str, code: str, test_code: str, description: str = ""
-    ) -> tuple[bool, str]:
-        prompt = (
-            "Ты второй независимый агент Code Review.\n"
-            "Проверь код навыка и unit-тест перед внедрением в production.\n"
-            "Верни строго JSON:\n"
-            '{"approved": true|false, "summary": "...", "issues": ["..."]}\n'
-            "Отклоняй, если есть: небезопасные операции, явные баги, плохая тестируемость,\n"
-            "или тест не покрывает главное поведение.\n\n"
-            f"Описание: {description}\n"
-            f"Навык ({filename}.py):\n{code}\n\n"
-            f"Тест:\n{test_code}"
-        )
-        answer = self._ask_ai("Ты строгий Python Code Reviewer.", prompt)
-        data = self._extract_json(answer or "")
-        if isinstance(data, dict) and "approved" in data:
-            approved = bool(data.get("approved"))
-            summary = str(data.get("summary", "")).strip()
-            issues = data.get("issues") or []
-            if isinstance(issues, list) and issues:
-                summary = (summary + " | " if summary else "") + "; ".join(
-                    str(i) for i in issues[:5]
-                )
-            return approved, (summary or ("approved" if approved else "rejected"))
-
-        try:
-            tree = ast.parse(code)
-        except SyntaxError as e:
-            return False, f"syntax error: {e}"
-
-        risky_calls = {"eval", "exec", "compile", "__import__"}
-        for node in ast.walk(tree):
-            if isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
-                if node.func.id in risky_calls:
-                    return False, f"обнаружен рискованный вызов: {node.func.id}()"
-        return True, "Fallback review: критических рисков не обнаружено"
-
-    def _run_unit_test(self, code: str, test_code: str) -> tuple[bool, str]:
-        with tempfile.TemporaryDirectory(prefix="argos_evo_") as td:
-            skill_path = os.path.join(td, "skill_under_test.py")
-            test_path = os.path.join(td, "test_generated_skill.py")
-
-            with open(skill_path, "w", encoding="utf-8") as f:
-                f.write(code)
-            with open(test_path, "w", encoding="utf-8") as f:
-                f.write(test_code)
-
-            cmd = [sys.executable, "-m", "unittest", "discover", "-s", td, "-p", "test_*.py"]
-            proc = subprocess.run(cmd, capture_output=True, text=True, timeout=40)
-            out = (proc.stdout or "") + ("\n" + proc.stderr if proc.stderr else "")
-            out = out.strip()
-            if proc.returncode == 0:
-                return True, out[-1200:] if out else "OK"
-            return False, out[-1600:] if out else "unit test failed"
-
-    def apply_patch(
-        self, filename: str, code: str, test_code: str | None = None, description: str = ""
-    ) -> str:
-        """Проверяет skill+test и записывает навык только после review и passing tests."""
-        filename = self._sanitize_filename(filename)
-        code = self._extract_code_only(code)
-        ok_code, reason = self._ensure_executable_skill(code)
-        if not ok_code:
-            return f"❌ Навык отклонён: {reason}"
-
-        generated_test = test_code or self._generate_unit_test(filename, code, description)
-        generated_test = self._extract_code_only(generated_test)
-        try:
-            ast.parse(generated_test)
-        except SyntaxError as e:
-            return f"❌ Синтаксическая ошибка в unit-тесте: {e}"
-
-        approved, review_summary = self._review_patch(filename, code, generated_test, description)
-        if not approved:
-            return f"❌ Code Review не пройден: {review_summary}"
-
-        tests_ok, test_report = self._run_unit_test(code, generated_test)
-        if not tests_ok:
-            return f"❌ Навык отклонён: unit-тест не пройден.\n{test_report}"
-
-        try:
-            os.makedirs(SKILLS_DIR, exist_ok=True)
-            os.makedirs(TESTS_GEN_DIR, exist_ok=True)
-
-            path = os.path.join(SKILLS_DIR, f"{filename}.py")
-            with open(path, "w", encoding="utf-8") as f:
-                f.write(code)
-
-            test_path = os.path.join(TESTS_GEN_DIR, f"test_skill_{filename}.py")
-            with open(test_path, "w", encoding="utf-8") as f:
-                f.write(generated_test)
-
-            size = os.path.getsize(path)
-            return (
-                f"✅ Навык '{filename}' внедрён в ДНК Аргоса ({size} байт).\n"
-                f"🧪 Unit-test: {test_path}\n"
-                f"🧠 Review: {review_summary}"
+            self._QUEUE_FILE.parent.mkdir(parents=True, exist_ok=True)
+            self._QUEUE_FILE.write_text(
+                json.dumps(self._pending, ensure_ascii=False, indent=2),
+                encoding="utf-8",
             )
-        except Exception as e:
-            return f"❌ Сбой мутации: {e}"
+        except Exception:
+            pass
 
-    def generate_skill(self, description: str) -> str:
-        """Генерирует навык + тест и принимает только после review/test gate."""
-        if not self.core:
-            log.error("Evolution: self.core is None! core=%s", self.core)
-            return "❌ Нет доступа к ядру ИИ. Передай core при инициализации."
+    def _parse_rss(self, xml_text: str, source_name: str) -> list:
+        """Парсит RSS/Atom XML, возвращает список заголовков."""
+        items = []
+        try:
+            root = ET.fromstring(xml_text)
+            ns = {"atom": "http://www.w3.org/2005/Atom"}
 
-        prompt = (
-            f"Напиши Python-модуль навыка для ИИ-системы Аргос.\n"
-            f"Описание: {description}\n\n"
-            f"Требования:\n"
-            f"- Один класс с __init__ и методами\n"
-            f"- Только стандартные библиотеки + requests + bs4\n"
-            f"- Комментарии на русском\n"
-            f"- Вернуть только код, без markdown и без пояснений\n"
-            f"Имя файла: угадай из описания (snake_case, без .py)"
-        )
-
-        answer = self._ask_ai(HARD_SKILL_SYSTEM_PROMPT, prompt)
-
-        if not answer:
-            return "❌ ИИ не ответил. Попробуй позже."
-
-        answer = self._extract_code_only(answer)
-        ok_code, reason = self._ensure_executable_skill(answer)
-        if not ok_code:
-            repaired = self._repair_to_code(answer, description)
-            ok_code, reason = self._ensure_executable_skill(repaired)
-            if ok_code:
-                answer = repaired
-            else:
-                return f"❌ ИИ выдал неисполняемый код: {reason}"
-
-        lines = answer.strip().splitlines()
-        filename = "new_skill"
-        for line in lines[:3]:
-            if line.startswith("#") and ".py" not in line:
-                candidate = line.lstrip("#").strip().split()[0].lower()
-                if candidate.replace("_", "").isalnum():
-                    filename = self._sanitize_filename(candidate)
+            # RSS 2.0
+            for item in root.iter("item"):
+                title_el = item.find("title")
+                if title_el is not None and title_el.text:
+                    title = title_el.text.strip()
+                    if len(title) > 15:
+                        items.append({"source": source_name, "title": title})
+                if len(items) >= 3:
                     break
 
-        test_code = self._generate_unit_test(filename, answer, description)
-        return self.apply_patch(filename, answer, test_code=test_code, description=description)
+            # Atom 1.0 (если RSS не нашёл)
+            if not items:
+                for entry in root.iter("{http://www.w3.org/2005/Atom}entry"):
+                    title_el = entry.find("{http://www.w3.org/2005/Atom}title")
+                    if title_el is not None and title_el.text:
+                        title = title_el.text.strip()
+                        if len(title) > 15:
+                            items.append({"source": source_name, "title": title})
+                    if len(items) >= 3:
+                        break
+        except Exception:
+            pass
+        return items
 
-    def list_skills(self) -> str:
-        try:
-            files = [
-                f[:-3]
-                for f in os.listdir(SKILLS_DIR)
-                if f.endswith(".py") and not f.startswith("__")
-            ]
-            if not files:
-                return "🧬 Навыки не найдены."
-            return "🧬 Навыки Аргоса:\n" + "\n".join(f"  • {s}" for s in sorted(files))
-        except Exception as e:
-            return f"Ошибка: {e}"
+    def fetch_headlines(self) -> list:
+        """Собирает заголовки из RSS-лент. Возвращает до 9 новостей."""
+        if not _REQUESTS_OK:
+            return []
 
-    def remove_skill(self, name: str) -> str:
-        path = os.path.join(SKILLS_DIR, f"{name}.py")
-        if not os.path.exists(path):
-            return f"❌ Навык '{name}' не найден."
-        os.remove(path)
-        return f"🗑️ Навык '{name}' удалён из ДНК."
+        headlines = []
+        errors = []
+        for source in self.RSS_SOURCES:
+            if len(headlines) >= 9:
+                break
+            try:
+                r = requests.get(
+                    source["url"],
+                    headers=self.HEADERS,
+                    timeout=10,
+                    allow_redirects=True,
+                )
+                if r.status_code == 200:
+                    items = self._parse_rss(r.text, source["name"])
+                    headlines.extend(items)
+                else:
+                    errors.append(f"{source['name']}: HTTP {r.status_code}")
+            except Exception as e:
+                errors.append(f"{source['name']}: {type(e).__name__}")
+                continue
 
-    def load_skill(self, name: str):
-        """Динамически загружает навык по имени."""
-        try:
-            mod = importlib.import_module(f"src.skills.{name}")
-            return mod, f"✅ '{name}' загружен."
-        except ModuleNotFoundError:
-            return None, f"❌ '{name}' не найден."
+        self._last_errors = errors
+        return headlines[:9]
 
-    def handle(self, text: str, core=None) -> str | None:
-        t = text.lower()
-        if not any(tr in t for tr in TRIGGERS):
-            return None
-        if core:
-            self.core = core
-        desc = text
-        for tr in TRIGGERS:
-            desc = desc.replace(tr, "").strip()
-        if not desc:
-            return "🧬 Эволюция Аргоса: опиши какой навык создать.\nПример: \"эволюция: создай навык для мониторинга CPU\""
-        return self.generate_skill(desc)
+    def generate_digest(self) -> str:
+        """Генерирует AI-дайджест из свежих RSS-заголовков."""
+        headlines = self.fetch_headlines()
 
+        if not headlines:
+            err_info = ""
+            if hasattr(self, "_last_errors") and self._last_errors:
+                err_info = "\n".join(f"  • {e}" for e in self._last_errors[:4])
+                return (
+                    "❌ AI-ДАЙДЖЕСТ: все источники недоступны.\n"
+                    f"Причины:\n{err_info}\n"
+                    "Проверь интернет-соединение или попробуй позже."
+                )
+            return "❌ Источники недоступны. Дайджест не сформирован."
 
-# Module-level handle for skill_loader
-_evolution_instance = None
+        top = headlines[:5]
+        date = time.strftime("%d.%m.%Y %H:%M")
+        lines = [f"📰 AI-ДАЙДЖЕСТ от {date}", "━" * 28]
+        for i, item in enumerate(top, 1):
+            lines.append(f"\n{i}. 【{item['source']}】\n   {item['title']}")
+        lines.append("\n" + "━" * 28)
+        lines.append(f"📊 Источников опрошено: {len(self.RSS_SOURCES)} | Новостей: {len(headlines)}")
+        lines.append("📡 Подготовлено Аргосом. Жду команды: опубликуй")
+        post = "\n".join(lines)
+        self._pending.append(post)
+        self._save_queue()
+        return post
 
+    def publish(self) -> str:
+        """Публикует пост через Telegram Bot API."""
+        if not self._pending:
+            return "📭 Нет постов в очереди. Сначала: дайджест"
+        post = self._pending.pop(0)
+        self._save_queue()
 
-def handle(text: str, core=None) -> str | None:
-    global _evolution_instance
-    if _evolution_instance is None:
-        _evolution_instance = ArgosEvolution(ai_core=core)
-    return _evolution_instance.handle(text, core)
+        if self._tg_token and self._tg_chatid and self._tg_token != "your_token_here":
+            try:
+                url = f"https://api.telegram.org/bot{self._tg_token}/sendMessage"
+                resp = requests.post(
+                    url,
+                    json={
+                        "chat_id": self._tg_chatid,
+                        "text": post,
+                        "parse_mode": "HTML",
+                    },
+                    timeout=10,
+                )
+                if resp.ok:
+                    return f"✅ Пост опубликован в Telegram ({len(post)} символов)."
+                else:
+                    return f"⚠️ Telegram вернул ошибку: {resp.text[:200]}"
+            except Exception as e:
+                return f"❌ Ошибка публикации: {e}"
+        else:
+            print(f"[MEDIA-ARCHITECT]:\n{post}")
+            return f"✅ Пост выведен в консоль ({len(post)} символов). Настрой TELEGRAM_BOT_TOKEN для публикации."
 
+    def start_morning_loop(self, hour: int = 9):
+        """Запускает ежедневную публикацию дайджеста в указанный час."""
+        self._running = True
 
-def setup(core=None):
-    global _evolution_instance
-    if _evolution_instance is None:
-        _evolution_instance = ArgosEvolution(ai_core=core)
-    else:
-        _evolution_instance.core = core
+        def _loop():
+            while self._running:
+                if int(time.strftime("%H")) == hour:
+                    self.generate_digest()
+                    self.publish()
+                    time.sleep(3600)
+                time.sleep(60)
+
+        threading.Thread(target=_loop, daemon=True).start()
+        return f"Медиа-Архитектор активен. Дайджест в {hour:02d}:00 ежедневно."
