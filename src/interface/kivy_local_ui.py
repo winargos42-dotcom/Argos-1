@@ -28,7 +28,7 @@ class ArgosLocalApp(App):
 
         # Заголовок
         header = Label(
-            text="ARGOS Universal OS v2.1.3",
+            text="ARGOS Universal OS v2.1.4",
             font_size="22sp",
             size_hint_y=0.12,
             color=(0.2, 0.8, 0.4, 1),
@@ -85,7 +85,7 @@ class ArgosLocalApp(App):
             f"▸ Платформа: {os_info}",
             f"▸ Хост: {hostname}",
             f"▸ Python: {py_ver}",
-            f"▸ ARGOS version: 2.1.3",
+            f"▸ ARGOS version: 2.1.4",
             f"▸ Режим: mobile",
             f"▸ Статус: онлайн",
             "",
@@ -151,7 +151,7 @@ class ArgosLocalApp(App):
         box.bind(minimum_height=box.setter("height"))
 
         lines = [
-            "[12:00:01] [INFO] ARGOS Universal OS v2.1.3 — запуск",
+            "[12:00:01] [INFO] ARGOS Universal OS v2.1.4 — запуск",
             "[12:00:01] [INFO] Python " + platform.python_version(),
             "[12:00:02] [INFO] Kivy UI инициализирован",
             "[12:00:02] [INFO] Android environment detected",
