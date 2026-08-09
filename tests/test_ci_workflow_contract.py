@@ -18,3 +18,8 @@ def test_ci_python3_syntax_gate_excludes_legacy_argos_deploy_tree():
 def test_ci_baseline_does_not_enforce_unbacked_coverage_floor():
     """Do not enforce the old 30% floor until the restored suite actually exercises src/."""
     assert "--cov-fail-under=30" not in _ci_workflow()
+
+
+def test_ci_does_not_suppress_project_validator_failures():
+    """A release-validation job must fail when validate_project.py fails."""
+    assert "python3 validate_project.py || true" not in _ci_workflow()
