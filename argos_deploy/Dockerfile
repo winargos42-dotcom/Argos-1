@@ -42,6 +42,7 @@ RUN pip install --no-cache-dir \
 # ── CORE + AI ─────────────────────────────────────────────────────────────────
 RUN pip install --no-cache-dir \
     python-dotenv>=1.0.0 psutil>=5.9.0 requests>=2.31.0 \
+    redis>=5.0.0 \
     python-telegram-bot>=21.0.0 \
     google-genai>=0.8.0 ollama>=0.3.0 \
     scikit-learn>=1.4.0 numpy>=1.26.0 \
