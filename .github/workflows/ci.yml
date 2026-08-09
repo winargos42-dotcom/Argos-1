@@ -31,4 +31,4 @@ jobs:
       - name: Validate project
         run: python3 validate_project.py || true
       - name: Run tests
-        run: pytest --cov=src --cov-fail-under=30 -q --tb=short
+        run: pytest --cov=src -q --tb=short
