@@ -26,6 +26,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     htop procps \
     && apt-get clean && rm -rf /var/lib/apt/lists/*
 
+# ── OPENAI CODEX CLI ──────────────────────────────────────────────────────────
+ENV CODEX_INSTALL_DIR=/usr/local/bin
+ENV CODEX_NON_INTERACTIVE=1
+RUN curl -fsSL https://chatgpt.com/codex/install.sh | sh && \
+    codex --version
+
 WORKDIR /app
 COPY requirements.txt ./
 
@@ -85,6 +91,7 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=20s --retries=3 \
 # ── RUNTIME STAGE (required by docker workflow --target runtime) ──────────────
 FROM base AS runtime
 
+ENV CODEX_HOME=/codex-home
 USER argos
 EXPOSE 8080
 CMD ["sh", "-c", "if [ \"${ARGOS_ENV:-local}\" = \"cloud\" ]; then python3 cloud_entry.py; else python3 main.py --no-gui; fi"]
