@@ -1,0 +1,5 @@
+#!/bin/sh
+set -eu
+
+WORKSPACE="${ARGOS_CODEX_WORKDIR:-/app}"
+exec codex -C "$WORKSPACE" "$@"
