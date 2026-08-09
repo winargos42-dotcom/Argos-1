@@ -4,6 +4,9 @@ WORKDIR /app
 
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
+ENV CODEX_HOME=/codex-home
+ENV CODEX_INSTALL_DIR=/usr/local/bin
+ENV CODEX_NON_INTERACTIVE=1
 
 # Debian slim uses PyMuPDF manylinux wheels. Alpine/musl tries to build/link
 # MuPDF locally and needs a much larger native toolchain on GCP.
@@ -23,6 +26,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     python-telegram-bot==20.7 \
     PyMuPDF \
     lz4
+
+# Install the official OpenAI Codex CLI for Railway-hosted agent workflows.
+RUN curl -fsSL https://chatgpt.com/codex/install.sh | sh \
+    && codex --version
 
 # Copy the application code
 COPY ./src/vpn_api.py /app/vpn_api.py
