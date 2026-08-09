@@ -29,6 +29,6 @@ jobs:
             ! -path "*/argos_deploy/*" \
             -exec python3 -m py_compile {} +
       - name: Validate project
-        run: python3 validate_project.py || true
+        run: python3 validate_project.py
       - name: Run tests
         run: pytest --cov=src -q --tb=short
