@@ -54,3 +54,13 @@ def test_invalid_state_root_raises(tmp_path: Path):
 
     with pytest.raises(PersistentStateError):
         prepare_persistent_state(app, state)
+
+
+def test_cloud_entry_prepares_state_before_orchestrator_import():
+    cloud_entry = Path(__file__).resolve().parents[1] / "cloud_entry.py"
+    source = cloud_entry.read_text(encoding="utf-8")
+
+    prepare_index = source.index("prepare_persistent_state")
+    orchestrator_index = source.index("from main import ArgosOrchestrator")
+
+    assert prepare_index < orchestrator_index
