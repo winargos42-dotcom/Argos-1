@@ -16,6 +16,7 @@ ENV DEBIAN_FRONTEND=noninteractive
 ENV CODEX_HOME=/codex-home
 ENV CODEX_INSTALL_DIR=/usr/local/bin
 ENV ARGOS_CODEX_WORKDIR=/app
+ENV ARGOS_STATE_ROOT=/app/persist
 
 # ── SYSTEM PACKAGES ───────────────────────────────────────────────────────────
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -75,15 +76,20 @@ RUN pip install --no-cache-dir xknx>=3.1.0 opcua>=0.98.13 || \
     echo "[WARN] Промышленные протоколы: частично недоступны"
 
 # ── CODEX AGENT ───────────────────────────────────────────────────────────────
-RUN curl -fsSL https://chatgpt.com/codex/install.sh | sh \
+# Install the Codex binaries into the image-owned home. Runtime auth is moved
+# below to the ARGOS persistent tree so a Railway volume can preserve it.
+RUN CODEX_HOME=/codex-home curl -fsSL https://chatgpt.com/codex/install.sh | sh \
     && codex --version
+
+# Runtime Codex config/auth cache lives together with ARGOS state.
+ENV CODEX_HOME=/app/persist/codex
 
 # ── APP ───────────────────────────────────────────────────────────────────────
 COPY . .
 
 RUN install -m 0755 codex-agent /usr/local/bin/codex-agent \
     && install -m 0755 docker-entrypoint.sh /usr/local/bin/argos-entrypoint \
-    && mkdir -p /codex-home data/ollama_trainer data/argos_model logs config/gateways config/dags
+    && mkdir -p /codex-home /app/persist/codex data/ollama_trainer data/argos_model logs config/gateways config/dags
 
 # Пользователь с доступом к serial, i2c, gpio, audio
 RUN groupadd -r argos 2>/dev/null || true; \
