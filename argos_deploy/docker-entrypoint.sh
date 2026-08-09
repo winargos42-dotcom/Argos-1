@@ -25,7 +25,7 @@ echo "[PERSIST] railway_volume_mount=${RAILWAY_VOLUME_MOUNT_PATH:-unset}"
 
 if [ -s "$CODEX_HOME/auth.json" ]; then
     echo "[CODEX] auth cache ready"
-elif [ "${ARGOS_CODEX_DEVICE_LOGIN:-0}" = "1" ]; then
+else
     echo "[CODEX] auth cache missing; starting device auth"
     gosu argos python3 -c 'import pty; raise SystemExit(pty.spawn(["codex", "login", "--device-auth"]))'
     if [ -s "$CODEX_HOME/auth.json" ]; then
@@ -33,8 +33,6 @@ elif [ "${ARGOS_CODEX_DEVICE_LOGIN:-0}" = "1" ]; then
     else
         echo "[CODEX] device auth ended without auth cache"
     fi
-else
-    echo "[CODEX] auth cache missing"
 fi
 
 echo "[CODEX] workspace=$ARGOS_CODEX_WORKDIR"
