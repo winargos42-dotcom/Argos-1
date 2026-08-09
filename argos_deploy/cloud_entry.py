@@ -54,6 +54,14 @@ def _init_orchestrator():
         if env_path:
             load_dotenv(env_path, override=True)
 
+        from pathlib import Path
+        from src.persistent_state import prepare_persistent_state
+
+        app_root = Path(__file__).resolve().parent
+        state_root = Path(os.getenv("ARGOS_STATE_ROOT", "/app/persist"))
+        state_mapping = prepare_persistent_state(app_root, state_root)
+        print(f"[CLOUD] Persistent state ready: {state_mapping}", flush=True)
+
         print("[CLOUD] Initializing ArgosOrchestrator ...", flush=True)
         from main import ArgosOrchestrator
         from src.mcp_api import ArgosMCPServer
