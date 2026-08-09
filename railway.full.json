@@ -5,9 +5,9 @@
     "dockerfilePath": "Dockerfile"
   },
   "deploy": {
-    "startCommand": "python3 main.py --no-gui",
-    "healthcheckPath": "/mcp",
-    "healthcheckTimeout": 120,
+    "startCommand": "python3 cloud_entry.py",
+    "healthcheckPath": "/health",
+    "healthcheckTimeout": 180,
     "restartPolicyType": "on_failure",
     "restartPolicyMaxRetries": 10
   }
