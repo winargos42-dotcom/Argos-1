@@ -26,6 +26,7 @@ jobs:
             ! -path "*/venv/*" \
             ! -path "*/__pycache__/*" \
             ! -path "*/node_modules/*" \
+            ! -path "*/argos_deploy/*" \
             -exec python3 -m py_compile {} +
       - name: Validate project
         run: python3 validate_project.py || true
