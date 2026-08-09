@@ -20,6 +20,18 @@ _boot_time = time.time()
 _ready = False
 _init_error = None
 
+
+def _report_codex_status() -> None:
+    codex_home = Path(os.getenv("CODEX_HOME", "/codex-home"))
+    workspace = Path(os.getenv("ARGOS_CODEX_WORKDIR", "/app"))
+    auth_status = "ready" if (codex_home / "auth.json").is_file() else "missing"
+    launcher_status = "ready" if Path("/usr/local/bin/codex-agent").is_file() else "missing"
+    print(f"[CODEX] auth cache {auth_status}", flush=True)
+    print(f"[CODEX] agent launcher {launcher_status}; workspace={workspace}", flush=True)
+
+
+_report_codex_status()
+
 # Lightweight app -- no heavy imports here
 app = FastAPI(title="Argos Cloud", version="2.1.3")
 app.add_middleware(
