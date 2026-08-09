@@ -8,7 +8,7 @@
     ]
   },
   "deploy": {
-    "startCommand": "/usr/local/bin/argos-entrypoint python3 cloud_entry.py",
+    "startCommand": "python3 cloud_entry.py",
     "healthcheckPath": "/health",
     "healthcheckTimeout": 180,
     "restartPolicyType": "ALWAYS"
