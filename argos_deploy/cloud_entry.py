@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import os
 import time
+from pathlib import Path
 from threading import Thread
 
 import uvicorn
@@ -54,6 +55,13 @@ def _init_orchestrator():
         if env_path:
             load_dotenv(env_path, override=True)
 
+        from src.persistent_state import prepare_persistent_state
+
+        app_root = Path(__file__).resolve().parent
+        state_root = Path(os.getenv("ARGOS_STATE_ROOT", "/app/persist"))
+        state_mapping = prepare_persistent_state(app_root, state_root)
+        print(f"[CLOUD] Persistent state ready: {state_mapping}", flush=True)
+
         print("[CLOUD] Initializing ArgosOrchestrator ...", flush=True)
         from main import ArgosOrchestrator
         from src.mcp_api import ArgosMCPServer
@@ -70,7 +78,7 @@ def _init_orchestrator():
 
         _ready = True
         elapsed = time.time() - _boot_time
-        print(f"[CLOUD] Argos ready\! uptime={elapsed:.1f}s", flush=True)
+        print(f"[CLOUD] Argos ready! uptime={elapsed:.1f}s", flush=True)
 
         # ── P2P auto-connect to known peers ──────────────────────────────
         try:
@@ -97,5 +105,5 @@ if __name__ == "__main__":
     host = os.getenv("ARGOS_MCP_HOST", "0.0.0.0").strip() or "0.0.0.0"
     port = int(os.getenv("PORT", os.getenv("ARGOS_MCP_PORT", "8080")) or "8080")
     print(f"[CLOUD] HTTP server starting on {host}:{port} ...", flush=True)
-    # uvicorn.run in the MAIN thread -- required for signal handlers\!
+    # uvicorn.run in the MAIN thread -- required for signal handlers!
     uvicorn.run(app, host=host, port=port, log_level="info")
