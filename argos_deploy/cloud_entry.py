@@ -63,7 +63,10 @@ def _init_orchestrator():
         admin = getattr(orchestrator, "admin", None)
 
         mcp = ArgosMCPServer(core=core, admin=admin)
-        app.mount("/mcp", mcp.app)
+        # Mount at the application root so the MCP server's own /mcp route
+        # is exposed publicly as /mcp rather than the accidental /mcp/mcp.
+        # /health and / are declared above and therefore keep precedence.
+        app.mount("/", mcp.app)
 
         _ready = True
         elapsed = time.time() - _boot_time
