@@ -43,5 +43,5 @@ ENV ARGOS_VPN_DRY_RUN=true
 # Expose the port
 EXPOSE 8004
 
-# Temporary device authorization runs beside the API so Railway healthchecks stay green.
-CMD ["sh", "-lc", "codex login --device-auth 2>&1 | tee /codex-home/device-auth.log & exec python -u -c \"import os; port = os.getenv('PORT', '8004'); import uvicorn; uvicorn.run('vpn_api:app', host='0.0.0.0', port=int(port), log_level='info')\""]
+# Run the API normally. Codex authentication persists in /codex-home.
+CMD ["python", "-u", "-c", "import os; port = os.getenv('PORT', '8004'); import uvicorn; uvicorn.run('vpn_api:app', host='0.0.0.0', port=int(port), log_level='info')"]
