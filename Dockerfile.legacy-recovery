@@ -72,6 +72,22 @@ telegram_text = telegram_text.replace(
     1,
 )
 telegram_path.write_text(telegram_text, encoding='utf-8')
+
+# Legacy Gist C2 compatibility: current core instantiates with core=self,
+# while the preserved legacy module expected explicit gist_id/token arguments.
+c2_path = Path('/app/src/argos_c2_gist.py')
+c2_text = c2_path.read_text(encoding='utf-8')
+old_gist = '    def __init__(self, gist_id: str, github_token: str, node_id: str = "Master"):\n        self.gist_id = gist_id\n        self.token = github_token\n'
+new_gist = '    def __init__(self, gist_id: str = "", github_token: str = "", node_id: str = "Master", core=None):\n        self.core = core\n        self.gist_id = gist_id or os.getenv("ARGOS_GIST_ID", "")\n        self.token = github_token or os.getenv("ARGOS_GITHUB_TOKEN", "")\n'
+if old_gist not in c2_text:
+    raise SystemExit('GistC2 constructor marker not found')
+c2_text = c2_text.replace(old_gist, new_gist, 1)
+old_drone = '    def __init__(self, gist_id: str, github_token: str):\n        self.gist_id = gist_id\n        self.token = github_token\n'
+new_drone = '    def __init__(self, gist_id: str = "", github_token: str = "", core=None):\n        self.core = core\n        self.gist_id = gist_id or os.getenv("ARGOS_GIST_ID", "")\n        self.token = github_token or os.getenv("ARGOS_GITHUB_TOKEN", "")\n'
+if old_drone not in c2_text:
+    raise SystemExit('GhostDroneClient constructor marker not found')
+c2_text = c2_text.replace(old_drone, new_drone, 1)
+c2_path.write_text(c2_text, encoding='utf-8')
 PY
 
 RUN groupadd -r argos 2>/dev/null || true; \
