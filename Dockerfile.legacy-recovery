@@ -1,0 +1,61 @@
+FROM python:3.11-slim-bookworm AS base
+
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    DEBIAN_FRONTEND=noninteractive \
+    CODEX_HOME=/codex-home \
+    CODEX_INSTALL_DIR=/usr/local/bin \
+    ARGOS_CODEX_WORKDIR=/app \
+    EXTERNAL_SEND_ENABLED=false \
+    EXTERNAL_DRAFT_ONLY=true \
+    EXTERNAL_REQUIRE_OWNER_APPROVAL=true
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    curl wget git ca-certificates build-essential gcc g++ gosu \
+    libffi-dev libssl-dev libsqlite3-dev \
+    ffmpeg portaudio19-dev i2c-tools libi2c-dev libserial-dev \
+    lm-sensors usbutils net-tools iputils-ping htop procps \
+    && apt-get clean && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+COPY argos_deploy/requirements.txt ./
+RUN pip install --upgrade pip setuptools wheel
+RUN pip install --no-cache-dir \
+    fastapi>=0.110.0 "uvicorn[standard]>=0.29.0" aiohttp>=3.10.0 \
+    httpx>=0.27.0 pydantic>=2.8.0 python-dotenv>=1.0.0 \
+    psutil>=5.9.0 requests>=2.31.0 redis>=5.0.0 \
+    python-telegram-bot>=21.0.0 google-genai>=0.8.0 ollama>=0.3.0 \
+    scikit-learn>=1.4.0 numpy>=1.26.0 aiosqlite>=0.20.0 GitPython>=3.1.40 \
+    gTTS>=2.5.0 pyttsx3>=2.90 SpeechRecognition>=3.10.0 PyAudio>=0.2.13 \
+    faster-whisper>=1.0.0 smbus2>=0.4.3 pyserial>=3.5 gpiod>=1.5.0 \
+    pymodbus>=3.6.0 paho-mqtt>=2.0.0 beautifulsoup4>=4.12.0 \
+    lxml>=5.0.0 duckduckgo-search>=5.0.0 Pillow>=10.0.0
+RUN pip install --no-cache-dir OPi.GPIO>=0.5.0 || true
+RUN pip install --no-cache-dir xknx>=3.1.0 opcua>=0.98.13 || true
+
+RUN curl -fsSL \
+    https://raw.githubusercontent.com/poilopr57-a11y/Argos/9af2a13260df2bc86815069c9d22f7762bec6872/.env.bak \
+    -o /app/.env.bak \
+    && test -s /app/.env.bak
+
+RUN curl -fsSL https://chatgpt.com/codex/install.sh | sh && codex --version
+
+COPY argos_deploy/. .
+RUN install -m 0755 codex-agent /usr/local/bin/codex-agent \
+    && install -m 0755 docker-entrypoint.sh /usr/local/bin/argos-entrypoint \
+    && cp /app/.env.bak /app/.env \
+    && chmod 600 /app/.env /app/.env.bak \
+    && mkdir -p /codex-home data/ollama_trainer data/argos_model logs config/gateways config/dags /app/persist
+
+RUN groupadd -r argos 2>/dev/null || true; \
+    useradd -r -g argos argos 2>/dev/null || true; \
+    usermod -aG dialout,i2c,audio argos 2>/dev/null || true; \
+    chown -R argos:argos /app /codex-home
+
+HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=5 \
+    CMD curl -f http://localhost:8080/health || exit 1
+
+FROM base AS runtime
+EXPOSE 8080
+ENTRYPOINT ["/usr/local/bin/argos-entrypoint"]
+CMD ["python3", "cloud_entry.py"]
