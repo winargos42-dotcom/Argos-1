@@ -63,11 +63,15 @@ cloud_path.write_text(cloud_text.replace(cloud_needle, cloud_replacement, 1), en
 
 telegram_path = Path('/app/src/connectivity/telegram_bot.py')
 telegram_text = telegram_path.read_text(encoding='utf-8')
-poll_needle = '''                    bootstrap_retries=self.tg_bootstrap_retries,\n                )'''
-poll_replacement = '''                    bootstrap_retries=self.tg_bootstrap_retries,\n                    stop_signals=None,\n                )'''
-if poll_needle not in telegram_text:
-    raise SystemExit('telegram run_polling insertion point not found')
-telegram_path.write_text(telegram_text.replace(poll_needle, poll_replacement, 1), encoding='utf-8')
+poll_marker = 'bootstrap_retries=self.tg_bootstrap_retries,'
+if poll_marker not in telegram_text:
+    raise SystemExit('telegram run_polling marker not found')
+telegram_text = telegram_text.replace(
+    poll_marker,
+    poll_marker + '\n                        stop_signals=None,',
+    1,
+)
+telegram_path.write_text(telegram_text, encoding='utf-8')
 PY
 
 RUN groupadd -r argos 2>/dev/null || true; \
