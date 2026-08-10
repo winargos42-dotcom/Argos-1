@@ -6,6 +6,7 @@ ENV PYTHONUNBUFFERED=1 \
     CODEX_HOME=/codex-home \
     CODEX_INSTALL_DIR=/usr/local/bin \
     ARGOS_CODEX_WORKDIR=/app \
+    ARGOS_LEGACY_TELEGRAM_POLLING=true \
     EXTERNAL_SEND_ENABLED=false \
     EXTERNAL_DRAFT_ONLY=true \
     EXTERNAL_REQUIRE_OWNER_APPROVAL=true
@@ -46,6 +47,21 @@ RUN install -m 0755 codex-agent /usr/local/bin/codex-agent \
     && cp /app/.env.bak /app/.env \
     && chmod 600 /app/.env /app/.env.bak \
     && mkdir -p /codex-home data/ollama_trainer data/argos_model logs config/gateways config/dags /app/persist
+
+# Recovery-only runtime patch: start the existing full ArgosTelegram bridge
+# after the external action guard and MCP surface are installed. This patch
+# exists only inside this image; argos_deploy/cloud_entry.py in Git is untouched.
+RUN python3 - <<'PY'
+from pathlib import Path
+
+path = Path('/app/cloud_entry.py')
+text = path.read_text(encoding='utf-8')
+needle = '        app.mount("/", mcp.app)\n\n        _ready = True\n'
+replacement = '''        app.mount("/", mcp.app)\n\n        if os.getenv("ARGOS_LEGACY_TELEGRAM_POLLING", "true").strip().lower() in {"1", "true", "on", "yes"}:\n            try:\n                from src.connectivity.telegram_bot import ArgosTelegram\n                tg_bridge = ArgosTelegram(core, admin=admin)\n                tg_ok, tg_reason = tg_bridge.can_start()\n                if tg_ok:\n                    Thread(target=tg_bridge.run, daemon=True, name="ArgosTelegram").start()\n                    print("[CLOUD] Telegram polling thread started", flush=True)\n                else:\n                    print(f"[CLOUD] Telegram polling not started: {tg_reason}", flush=True)\n            except Exception as tg_exc:\n                print(f"[CLOUD] Telegram polling warning: {tg_exc}", flush=True)\n\n        _ready = True\n'''
+if needle not in text:
+    raise SystemExit('cloud_entry Telegram insertion point not found')
+path.write_text(text.replace(needle, replacement, 1), encoding='utf-8')
+PY
 
 RUN groupadd -r argos 2>/dev/null || true; \
     useradd -r -g argos argos 2>/dev/null || true; \
