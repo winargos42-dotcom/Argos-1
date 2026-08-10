@@ -63,7 +63,7 @@ def test_read_only_gmail_check_is_allowed(monkeypatch, tmp_path):
     assert not audit_path.exists()
 
 
-def test_draft_instruction_with_explicit_do_not_send_is_allowed(monkeypatch, tmp_path):
+def test_draft_instruction_is_allowed_and_audited(monkeypatch, tmp_path):
     _clear_policy_env(monkeypatch)
     module = _load_module()
     audit_path = tmp_path / "audit.jsonl"
@@ -77,8 +77,15 @@ def test_draft_instruction_with_explicit_do_not_send_is_allowed(monkeypatch, tmp
 
     assert decision.external is False
     assert decision.allowed is True
-    assert decision.reason == "not_external_outbound"
-    assert not audit_path.exists()
+    assert decision.reason == "draft_prepared"
+    assert audit_path.exists()
+    event = json.loads(audit_path.read_text(encoding="utf-8").splitlines()[-1])
+    assert event["actor"] == "argos-agent"
+    assert event["source"] == "agent"
+    assert event["status"] == "draft_prepared"
+    assert event["prepared"] is True
+    assert event["approved"] is False
+    assert event["target"] == "support"
 
 
 def test_telegram_and_webhook_outreach_are_detected(monkeypatch, tmp_path):
