@@ -63,6 +63,24 @@ def test_read_only_gmail_check_is_allowed(monkeypatch, tmp_path):
     assert not audit_path.exists()
 
 
+def test_draft_instruction_with_explicit_do_not_send_is_allowed(monkeypatch, tmp_path):
+    _clear_policy_env(monkeypatch)
+    module = _load_module()
+    audit_path = tmp_path / "audit.jsonl"
+    guard = module.ExternalActionGuard(audit_path=audit_path)
+
+    decision = guard.evaluate(
+        "напиши черновик письма в support, но не отправляй",
+        actor="argos-agent",
+        source="agent",
+    )
+
+    assert decision.external is False
+    assert decision.allowed is True
+    assert decision.reason == "not_external_outbound"
+    assert not audit_path.exists()
+
+
 def test_telegram_and_webhook_outreach_are_detected(monkeypatch, tmp_path):
     _clear_policy_env(monkeypatch)
     module = _load_module()
@@ -107,6 +125,22 @@ def test_explicit_approval_allows_send_when_policy_switches_allow_it(monkeypatch
     assert decision.external is True
     assert decision.allowed is True
     assert decision.reason == "approved"
+
+
+def test_allowed_send_fails_closed_when_audit_cannot_be_written(monkeypatch, tmp_path):
+    _clear_policy_env(monkeypatch)
+    monkeypatch.setenv("EXTERNAL_SEND_ENABLED", "true")
+    monkeypatch.setenv("EXTERNAL_DRAFT_ONLY", "false")
+    monkeypatch.setenv("EXTERNAL_REQUIRE_OWNER_APPROVAL", "true")
+    module = _load_module()
+    guard = module.ExternalActionGuard(audit_path=tmp_path)
+
+    decision = guard.evaluate("reply to support by email", approved=True)
+
+    assert decision.external is True
+    assert decision.allowed is False
+    assert decision.reason == "audit_write_failed"
+    assert decision.audit_written is False
 
 
 def test_audit_log_redacts_sensitive_payload(monkeypatch, tmp_path):
