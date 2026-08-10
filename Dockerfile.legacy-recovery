@@ -48,19 +48,26 @@ RUN install -m 0755 codex-agent /usr/local/bin/codex-agent \
     && chmod 600 /app/.env /app/.env.bak \
     && mkdir -p /codex-home data/ollama_trainer data/argos_model logs config/gateways config/dags /app/persist
 
-# Recovery-only runtime patch: start the existing full ArgosTelegram bridge
-# after the external action guard and MCP surface are installed. This patch
-# exists only inside this image; argos_deploy/cloud_entry.py in Git is untouched.
+# Recovery-only runtime patches. They are applied inside this image only;
+# shared argos_deploy source files in Git are left untouched.
 RUN python3 - <<'PY'
 from pathlib import Path
 
-path = Path('/app/cloud_entry.py')
-text = path.read_text(encoding='utf-8')
-needle = '        app.mount("/", mcp.app)\n\n        _ready = True\n'
-replacement = '''        app.mount("/", mcp.app)\n\n        if os.getenv("ARGOS_LEGACY_TELEGRAM_POLLING", "true").strip().lower() in {"1", "true", "on", "yes"}:\n            try:\n                from src.connectivity.telegram_bot import ArgosTelegram\n                tg_bridge = ArgosTelegram(core, admin=admin)\n                tg_ok, tg_reason = tg_bridge.can_start()\n                if (\n                    not tg_ok\n                    and tg_reason == "USER_ID не задан"\n                    and (tg_bridge.admin_ids or tg_bridge.user_ids or tg_bridge.bot_ids)\n                ):\n                    tg_ok = True\n                    tg_reason = "role IDs configured"\n                if tg_ok:\n                    Thread(target=tg_bridge.run, daemon=True, name="ArgosTelegram").start()\n                    print("[CLOUD] Telegram polling thread started", flush=True)\n                else:\n                    print(f"[CLOUD] Telegram polling not started: {tg_reason}", flush=True)\n            except Exception as tg_exc:\n                print(f"[CLOUD] Telegram polling warning: {tg_exc}", flush=True)\n\n        _ready = True\n'''
-if needle not in text:
+cloud_path = Path('/app/cloud_entry.py')
+cloud_text = cloud_path.read_text(encoding='utf-8')
+cloud_needle = '        app.mount("/", mcp.app)\n\n        _ready = True\n'
+cloud_replacement = '''        app.mount("/", mcp.app)\n\n        if os.getenv("ARGOS_LEGACY_TELEGRAM_POLLING", "true").strip().lower() in {"1", "true", "on", "yes"}:\n            try:\n                from src.connectivity.telegram_bot import ArgosTelegram\n                tg_bridge = ArgosTelegram(core, admin=admin)\n                tg_ok, tg_reason = tg_bridge.can_start()\n                if (\n                    not tg_ok\n                    and tg_reason == "USER_ID не задан"\n                    and (tg_bridge.admin_ids or tg_bridge.user_ids or tg_bridge.bot_ids)\n                ):\n                    tg_ok = True\n                    tg_reason = "role IDs configured"\n                if tg_ok:\n                    Thread(target=tg_bridge.run, daemon=True, name="ArgosTelegram").start()\n                    print("[CLOUD] Telegram polling thread started", flush=True)\n                else:\n                    print(f"[CLOUD] Telegram polling not started: {tg_reason}", flush=True)\n            except Exception as tg_exc:\n                print(f"[CLOUD] Telegram polling warning: {tg_exc}", flush=True)\n\n        _ready = True\n'''
+if cloud_needle not in cloud_text:
     raise SystemExit('cloud_entry Telegram insertion point not found')
-path.write_text(text.replace(needle, replacement, 1), encoding='utf-8')
+cloud_path.write_text(cloud_text.replace(cloud_needle, cloud_replacement, 1), encoding='utf-8')
+
+telegram_path = Path('/app/src/connectivity/telegram_bot.py')
+telegram_text = telegram_path.read_text(encoding='utf-8')
+poll_needle = '''                    bootstrap_retries=self.tg_bootstrap_retries,\n                )'''
+poll_replacement = '''                    bootstrap_retries=self.tg_bootstrap_retries,\n                    stop_signals=None,\n                )'''
+if poll_needle not in telegram_text:
+    raise SystemExit('telegram run_polling insertion point not found')
+telegram_path.write_text(telegram_text.replace(poll_needle, poll_replacement, 1), encoding='utf-8')
 PY
 
 RUN groupadd -r argos 2>/dev/null || true; \
