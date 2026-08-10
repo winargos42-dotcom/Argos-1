@@ -1,20 +1,19 @@
 from pathlib import Path
 
 
-def test_agent_checks_external_guard_before_core_dispatch() -> None:
+def test_agent_guard_delegates_outbound_policy_before_sync_dispatch() -> None:
     root = Path(__file__).resolve().parents[1]
-    source = (root / "src" / "agent.py").read_text(encoding="utf-8")
+    agent = (root / "src" / "agent.py").read_text(encoding="utf-8")
+    guard = (root / "src" / "agent_guard.py").read_text(encoding="utf-8")
 
-    assert "from src.external_action_guard import ExternalActionGuard" in source
-    assert "self._external_guard = ExternalActionGuard()" in source
-    assert 'source="agent.execute_plan"' in source
-    assert 'source="agent.run_chain"' in source
-    assert "if not external_decision.allowed:" in source
+    assert "from src.agent_guard import AgentGuard" in agent
+    assert "decision = self._guard.validate_step(step)" in agent
+    assert "from src.external_action_guard import ExternalActionGuard" in guard
+    assert "self._external_guard = ExternalActionGuard()" in guard
+    assert 'source="agent.validate_step"' in guard
+    assert "external_decision = self._external_guard.evaluate(" in guard
+    assert "if not external_decision.allowed:" in guard
 
-    sync_guard = source.index('source="agent.execute_plan"')
-    sync_dispatch = source.index("self._execute_step(step, admin, flasher)")
-    assert sync_guard < sync_dispatch
-
-    async_guard = source.index('source="agent.run_chain"')
-    async_dispatch = source.index("result = self.core.process(task)")
-    assert async_guard < async_dispatch
+    agent_guard_pos = agent.index("decision = self._guard.validate_step(step)")
+    dispatch_pos = agent.index("self._execute_step(step, admin, flasher)")
+    assert agent_guard_pos < dispatch_pos
