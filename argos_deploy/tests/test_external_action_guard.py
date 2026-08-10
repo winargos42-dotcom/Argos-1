@@ -127,6 +127,31 @@ def test_explicit_approval_allows_send_when_policy_switches_allow_it(monkeypatch
     assert decision.reason == "approved"
 
 
+def test_fastapi_cloud_direct_support_is_permanently_denied(monkeypatch, tmp_path):
+    _clear_policy_env(monkeypatch)
+    monkeypatch.setenv("EXTERNAL_SEND_ENABLED", "true")
+    monkeypatch.setenv("EXTERNAL_DRAFT_ONLY", "false")
+    monkeypatch.setenv("EXTERNAL_REQUIRE_OWNER_APPROVAL", "true")
+    module = _load_module()
+    guard = module.ExternalActionGuard(audit_path=tmp_path / "audit.jsonl")
+
+    by_address = guard.evaluate(
+        "send email to support@fastapicloud.com with the reproduction",
+        approved=True,
+    )
+    by_name = guard.evaluate(
+        "reply to FastAPI Cloud support about the deployment issue",
+        approved=True,
+    )
+
+    assert by_address.external is True
+    assert by_address.allowed is False
+    assert by_address.reason == "prohibited_channel"
+    assert by_name.external is True
+    assert by_name.allowed is False
+    assert by_name.reason == "prohibited_channel"
+
+
 def test_allowed_send_fails_closed_when_audit_cannot_be_written(monkeypatch, tmp_path):
     _clear_policy_env(monkeypatch)
     monkeypatch.setenv("EXTERNAL_SEND_ENABLED", "true")
