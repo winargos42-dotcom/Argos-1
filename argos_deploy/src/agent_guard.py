@@ -3,6 +3,8 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
+from src.external_action_guard import ExternalActionGuard
+
 
 @dataclass
 class GuardDecision:
@@ -51,6 +53,9 @@ class AgentGuard:
         "rollback",
     }
 
+    def __init__(self) -> None:
+        self._external_guard = ExternalActionGuard()
+
     def is_probably_code(self, text: str) -> bool:
         t = (text or "").strip().lower()
         if not t:
@@ -73,6 +78,15 @@ class AgentGuard:
 
         if not sanitized:
             return GuardDecision(False, "empty_step")
+
+        external_decision = self._external_guard.evaluate(
+            sanitized,
+            actor="argos-agent",
+            source="agent.validate_step",
+            approved=False,
+        )
+        if not external_decision.allowed:
+            return GuardDecision(False, f"external:{external_decision.reason}", sanitized)
 
         if self.is_probably_code(raw):
             return GuardDecision(False, "code_detected", sanitized)

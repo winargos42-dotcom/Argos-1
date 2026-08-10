@@ -76,11 +76,23 @@ def _init_orchestrator():
 
         print("[CLOUD] Initializing ArgosOrchestrator ...", flush=True)
         from main import ArgosOrchestrator
+        from src.external_guard_runtime import install_external_action_guard
         from src.mcp_api import ArgosMCPServer
 
         orchestrator = ArgosOrchestrator()
         core  = getattr(orchestrator, "core",  None)
         admin = getattr(orchestrator, "admin", None)
+
+        # Install the fail-closed communication policy before any generic MCP
+        # command surface can dispatch text into ARGOS core.
+        install_external_action_guard(core)
+        print(
+            "[SECURITY] External action guard active "
+            f"send={os.getenv('EXTERNAL_SEND_ENABLED', 'false')} "
+            f"draft_only={os.getenv('EXTERNAL_DRAFT_ONLY', 'true')} "
+            f"approval={os.getenv('EXTERNAL_REQUIRE_OWNER_APPROVAL', 'true')}",
+            flush=True,
+        )
 
         mcp = ArgosMCPServer(core=core, admin=admin)
         # Mount at the application root so the MCP server's own /mcp route
