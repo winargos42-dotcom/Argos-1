@@ -47,6 +47,12 @@ _NEGATED_ACTION_RE = re.compile(
     re.IGNORECASE,
 )
 
+_PROHIBITED_CHANNEL_PATTERNS: tuple[re.Pattern[str], ...] = (
+    re.compile(r"\bsupport@fastapicloud\.com\b", re.IGNORECASE),
+    re.compile(r"\bfastapi\s+cloud\b.{0,60}\bsupport\b", re.IGNORECASE | re.DOTALL),
+    re.compile(r"\bsupport\b.{0,60}\bfastapi\s+cloud\b", re.IGNORECASE | re.DOTALL),
+)
+
 _URL_RE = re.compile(r"https?://[^\s]+", re.IGNORECASE)
 _EMAIL_RE = re.compile(r"[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}", re.IGNORECASE)
 _BEARER_RE = re.compile(r"\bBearer\s+[A-Za-z0-9._~+/=-]{8,}", re.IGNORECASE)
@@ -97,6 +103,10 @@ def _canonical_match(text: str, patterns: tuple[tuple[str, re.Pattern[str]], ...
         if pattern.search(text):
             return name
     return None
+
+
+def _is_prohibited_channel(text: str) -> bool:
+    return any(pattern.search(text or "") for pattern in _PROHIBITED_CHANNEL_PATTERNS)
 
 
 def _redacted_preview(text: str, limit: int = 220) -> str:
@@ -159,8 +169,12 @@ class ExternalActionGuard:
         send_enabled = _env_bool("EXTERNAL_SEND_ENABLED", False)
         draft_only = _env_bool("EXTERNAL_DRAFT_ONLY", True)
         approval_required = _env_bool("EXTERNAL_REQUIRE_OWNER_APPROVAL", True)
+        prohibited_channel = _is_prohibited_channel(text)
 
-        if not send_enabled:
+        if prohibited_channel:
+            allowed = False
+            reason = "prohibited_channel"
+        elif not send_enabled:
             allowed = False
             reason = "external_send_disabled"
         elif draft_only:
@@ -183,10 +197,12 @@ class ExternalActionGuard:
             "payload_preview": _redacted_preview(text or ""),
             "prepared": True,
             "status": "allowed" if allowed else "blocked",
+            "reason": reason,
             "approval_required": approval_required,
             "approved": bool(approved),
             "external_send_enabled": send_enabled,
             "draft_only": draft_only,
+            "prohibited_channel": prohibited_channel,
         }
         if metadata:
             event["metadata"] = self._sanitize_metadata(metadata)
