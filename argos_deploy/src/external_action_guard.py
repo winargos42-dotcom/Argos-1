@@ -22,7 +22,7 @@ _ACTION_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
     ("reply", re.compile(r"\b(reply|respond)\b|\bответ(?:ь|ить|ьте)\b", re.IGNORECASE)),
     ("forward", re.compile(r"\bforward\b|\bперешл(?:и|ите|ать)\w*", re.IGNORECASE)),
     ("contact", re.compile(r"\bcontact\b|\bсвяж(?:ись|итесь)|\bсвязаться\b", re.IGNORECASE)),
-    ("publish", re.compile(r"\bpublish\b|\bопубликов(?:ать|атьcя)|\bопубликуй\w*", re.IGNORECASE)),
+    ("publish", re.compile(r"\bpublish\b|\bопубликовать\b|\bопубликуй\w*", re.IGNORECASE)),
     ("post", re.compile(r"\bpost\b|\bзапост(?:ить|и)\w*", re.IGNORECASE)),
 )
 
@@ -37,6 +37,14 @@ _TARGET_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
     ("press", re.compile(r"\bpress\b|\bmedia\b|\bпресс\w*|\bсми\b", re.IGNORECASE)),
     ("company", re.compile(r"\bcompany\b|\bpartner\b|\bкомпани\w*|\bпартн[её]р\w*", re.IGNORECASE)),
     ("community", re.compile(r"\bhabr\b|\b4pda\b|\bforum\b|\bcommunity\b|\bфорум\w*|\bсообществ\w*", re.IGNORECASE)),
+)
+
+_NEGATED_ACTION_RE = re.compile(
+    r"(?:\bdo\s+not\s+|\bdon['’]t\s+)(?:send|reply|respond|forward|contact|publish|post)\b"
+    r"|\bне\s+(?:отправ(?:ляй|лять|ь|ить|ьте)\w*|ответ(?:ь|ить|ьте|чай)\w*|"
+    r"перешл(?:и|ите|ать)\w*|связывайся|связываться|свяжись|публикуй\w*|"
+    r"опубликовать|постить|запости\w*)",
+    re.IGNORECASE,
 )
 
 _URL_RE = re.compile(r"https?://[^\s]+", re.IGNORECASE)
@@ -123,7 +131,8 @@ class ExternalActionGuard:
     @staticmethod
     def classify(text: str) -> tuple[bool, str, str]:
         clean = text or ""
-        action = _canonical_match(clean, _ACTION_PATTERNS)
+        action_text = _NEGATED_ACTION_RE.sub(" ", clean)
+        action = _canonical_match(action_text, _ACTION_PATTERNS)
         target = _canonical_match(clean, _TARGET_PATTERNS)
         return bool(action and target), action or "none", target or "none"
 
