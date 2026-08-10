@@ -71,6 +71,11 @@ telegram_text = telegram_text.replace(
     poll_marker + '\n                        stop_signals=None,',
     1,
 )
+auth_marker = '        if uid in getattr(self, "allowed_ids", set()):\n            return ROLE_USER\n        return ROLE_NONE\n'
+auth_replacement = '        if uid in getattr(self, "allowed_ids", set()):\n            return ROLE_USER\n        print(f"[TG-AUTH] denied uid={uid}", flush=True)\n        return ROLE_NONE\n'
+if auth_marker not in telegram_text:
+    raise SystemExit('telegram auth marker not found')
+telegram_text = telegram_text.replace(auth_marker, auth_replacement, 1)
 telegram_path.write_text(telegram_text, encoding='utf-8')
 
 # Legacy Gist C2 compatibility: current core instantiates with core=self,
