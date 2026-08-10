@@ -1,15 +1,16 @@
 from pathlib import Path
 
 
-def test_mcp_command_checks_external_guard_before_core_dispatch() -> None:
+def test_cloud_runtime_wraps_core_before_mcp_is_created() -> None:
     root = Path(__file__).resolve().parents[1]
-    source = (root / "src" / "mcp_api.py").read_text(encoding="utf-8")
+    cloud = (root / "cloud_entry.py").read_text(encoding="utf-8")
+    mcp = (root / "src" / "mcp_api.py").read_text(encoding="utf-8")
 
-    assert "from src.external_action_guard import ExternalActionGuard" in source
-    assert "self._external_guard = ExternalActionGuard()" in source
-    assert 'source="mcp.command"' in source
-    assert "if not external_decision.allowed:" in source
+    assert "from src.external_guard_runtime import install_external_action_guard" in cloud
+    assert "install_external_action_guard(core)" in cloud
+    assert "mcp = ArgosMCPServer(core=core, admin=admin)" in cloud
+    assert "result = await self.core.process_logic_async(text, self.admin, None)" in mcp
 
-    guard_pos = source.index('source="mcp.command"')
-    dispatch_pos = source.index("result = await self.core.process_logic_async(text, self.admin, None)")
-    assert guard_pos < dispatch_pos
+    install_pos = cloud.index("install_external_action_guard(core)")
+    mcp_pos = cloud.index("mcp = ArgosMCPServer(core=core, admin=admin)")
+    assert install_pos < mcp_pos
