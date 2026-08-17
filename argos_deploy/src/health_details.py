@@ -41,7 +41,6 @@ def collect_nodes(core: Any) -> dict[str, Any]:
             power = peer.get("power")
             safe_peers.append(
                 {
-                    "hostname": peer.get("hostname"),
                     "role": peer.get("role"),
                     "last_seen": peer.get("last_seen"),
                     "age_days": peer.get("age_days"),
@@ -58,7 +57,6 @@ def collect_nodes(core: Any) -> dict[str, Any]:
             "online": len(safe_peers) + 1,
             "peers_online": len(safe_peers),
             "local": {
-                "hostname": local.get("hostname"),
                 "role": local.get("role"),
                 "age_days": local.get("age_days"),
                 "power": (
@@ -100,14 +98,14 @@ def collect_system() -> dict[str, Any]:
         return _unavailable(f"system_error:{type(exc).__name__}")
 
 
-def _railway_metadata() -> dict[str, str | None]:
-    safe_names = {
-        "project_name": "RAILWAY_PROJECT_NAME",
-        "service_name": "RAILWAY_SERVICE_NAME",
-        "environment_name": "RAILWAY_ENVIRONMENT_NAME",
-        "public_domain": "RAILWAY_PUBLIC_DOMAIN",
+def _railway_metadata() -> dict[str, bool]:
+    """Expose runtime presence without stable internal identifiers or names."""
+    return {
+        "managed": bool(
+            os.getenv("RAILWAY_ENVIRONMENT_ID")
+            or os.getenv("RAILWAY_SERVICE_ID")
+        )
     }
-    return {label: os.getenv(env_name) for label, env_name in safe_names.items()}
 
 
 def _docker_state() -> dict[str, Any]:
@@ -134,24 +132,20 @@ def _docker_state() -> dict[str, Any]:
         if result.returncode != 0:
             return _unavailable(f"docker_ps_exit_{result.returncode}")
 
-        services = []
+        states: dict[str, int] = {}
+        total = 0
         for line in result.stdout.splitlines():
             if not line.strip():
                 continue
             item = json.loads(line)
-            services.append(
-                {
-                    "name": item.get("Names"),
-                    "state": item.get("State"),
-                    "status": item.get("Status"),
-                }
-            )
+            state = str(item.get("State") or "unknown").lower()
+            states[state] = states.get(state, 0) + 1
+            total += 1
         return {
             "available": True,
-            "services": services,
-            "running": sum(
-                1 for item in services if item.get("state") == "running"
-            ),
+            "total": total,
+            "running": states.get("running", 0),
+            "states": states,
         }
     except Exception as exc:
         return _unavailable(f"docker_error:{type(exc).__name__}")
@@ -202,17 +196,37 @@ def _collect_inference(core: Any) -> dict[str, Any]:
         details = getter()
         if not isinstance(details, dict):
             return _unavailable("invalid_inference_status")
-        if "available" not in details:
-            providers = details.get("providers", {})
-            details = {
-                **details,
-                "available": any(
-                    isinstance(item, dict)
-                    and item.get("available") is True
-                    for item in providers.values()
-                ),
+        providers = details.get("providers", {})
+        safe_provider_fields = {
+            "configured",
+            "available",
+            "status",
+            "last_success_at",
+            "last_checked_at",
+            "last_error",
+            "next_probe_at",
+            "permanent",
+        }
+        safe_providers = {
+            str(name): {
+                key: value
+                for key, value in item.items()
+                if key in safe_provider_fields
             }
-        return details
+            for name, item in providers.items()
+            if isinstance(item, dict)
+        }
+        return {
+            "available": details.get("available")
+            if "available" in details
+            else any(
+                item.get("available") is True
+                for item in safe_providers.values()
+            ),
+            "mode": details.get("mode"),
+            "selected": details.get("selected"),
+            "providers": safe_providers,
+        }
     except Exception as exc:
         return _unavailable(f"inference_error:{type(exc).__name__}")
 
@@ -253,7 +267,7 @@ def build_health_details(
         "service": {
             "ready": bool(ready),
             "uptime_seconds": max(0, int(now - boot_time)),
-            "error": init_error,
+            "error": "initialization_failed" if init_error else None,
         },
         "nodes": nodes,
         "mempalace": mempalace,
