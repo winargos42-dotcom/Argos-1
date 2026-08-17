@@ -133,3 +133,39 @@ def test_health_details_does_not_serialize_secret_environment(monkeypatch):
 
     assert "do-not-leak" not in serialized
     assert "also-do-not-leak" not in serialized
+
+
+def test_public_container_health_omits_internal_ids_paths_and_images(
+    monkeypatch, tmp_path
+):
+    monkeypatch.setenv("RAILWAY_PROJECT_ID", "private-project-id")
+    monkeypatch.setenv("RAILWAY_SERVICE_ID", "private-service-id")
+    monkeypatch.setenv("RAILWAY_ENVIRONMENT_ID", "private-environment-id")
+    monkeypatch.setenv("RAILWAY_RUN_UID", "private-run-id")
+    monkeypatch.setenv("RAILWAY_SERVICE_NAME", "argos-full")
+    monkeypatch.setenv("RAILWAY_VOLUME_MOUNT_PATH", str(tmp_path))
+    monkeypatch.setattr(
+        health_details,
+        "_docker_state",
+        lambda: {
+            "available": True,
+            "running": 1,
+            "services": [{"name": "argos", "state": "running"}],
+        },
+    )
+
+    container = health_details.collect_container()
+    serialized = repr(container)
+
+    assert container["railway"]["service_name"] == "argos-full"
+    assert container["volume"] == {
+        "available": True,
+        "configured": True,
+        "writable": True,
+    }
+    assert "private-project-id" not in serialized
+    assert "private-service-id" not in serialized
+    assert "private-environment-id" not in serialized
+    assert "private-run-id" not in serialized
+    assert str(tmp_path) not in serialized
+    assert "image" not in serialized.lower()
