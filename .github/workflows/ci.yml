@@ -41,12 +41,24 @@ jobs:
         run: |
           python -m py_compile             argos_deploy/cloud_entry.py             argos_deploy/src/core.py             argos_deploy/src/health_details.py             argos_deploy/src/mempalace_bridge.py
 
-      - name: Run full deployed-runtime test suite
+      - name: Verify inference resilience in an isolated process
+        working-directory: argos_deploy
+        env:
+          PYTHONPATH: .
+        run: >-
+          python -m pytest --rootdir=. -c ../pytest.ini
+          tests/test_inference_resilience.py
+          --import-mode=importlib
+          --timeout=30 --timeout-method=thread
+          -vv --tb=short
+
+      - name: Run remaining deployed-runtime test suite
         working-directory: argos_deploy
         env:
           PYTHONPATH: .
         run: >-
           python -m pytest --rootdir=. -c ../pytest.ini tests
+          --ignore=tests/test_inference_resilience.py
           --import-mode=importlib
           --timeout=120 --timeout-method=thread
           --cov=src --cov-fail-under=30 -q --tb=short
