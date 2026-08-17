@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
-from src import health_details
+from src import health_details, mempalace_bridge
 
 
 def test_health_details_has_stable_live_telemetry_shape(monkeypatch):
@@ -73,6 +73,63 @@ def test_health_details_has_stable_live_telemetry_shape(monkeypatch):
     assert payload["system"]["cpu"]["percent"] == 12.5
     assert payload["inference"]["providers"]["Ollama"]["available"] is False
     assert payload["container"]["docker"]["available"] is False
+
+
+def test_health_details_sanitizes_public_runtime_values(monkeypatch):
+    core = SimpleNamespace(
+        p2p=SimpleNamespace(
+            profile=SimpleNamespace(
+                to_dict=lambda: {"hostname": "private-local", "role": "core"}
+            ),
+            registry=SimpleNamespace(
+                all=lambda: [
+                    {"hostname": "private-peer", "role": "gpu", "last_seen": 10}
+                ]
+            ),
+        ),
+        inference_health=lambda: {
+            "available": True,
+            "mode": "auto",
+            "selected": "CloudFallback",
+            "providers": {
+                "CloudFallback": {
+                    "configured": True,
+                    "available": True,
+                    "status": "available",
+                    "endpoint": "http://private-inference.internal/v1",
+                }
+            },
+        },
+    )
+    monkeypatch.setattr(
+        health_details,
+        "collect_system",
+        lambda: {"available": True, "cpu": {}, "ram": {}, "disks": [], "gpus": []},
+    )
+    monkeypatch.setattr(
+        health_details,
+        "collect_mempalace",
+        lambda: {"available": True, "drawers": 42},
+    )
+    monkeypatch.setattr(
+        health_details,
+        "collect_container",
+        lambda: {"available": True, "docker": {"available": True}},
+    )
+
+    payload = health_details.build_health_details(
+        ready=False,
+        init_error="secret path /app/persist failed",
+        boot_time=0.0,
+        core=core,
+        now=1.0,
+    )
+    serialized = repr(payload)
+
+    assert payload["service"]["error"] == "initialization_failed"
+    assert "private-local" not in serialized
+    assert "private-peer" not in serialized
+    assert "private-inference.internal" not in serialized
 
 
 def test_health_details_marks_missing_sources_unavailable(monkeypatch):
@@ -157,7 +214,7 @@ def test_public_container_health_omits_internal_ids_paths_and_images(
     container = health_details.collect_container()
     serialized = repr(container)
 
-    assert container["railway"]["service_name"] == "argos-full"
+    assert container["railway"] == {"managed": True}
     assert container["volume"] == {
         "available": True,
         "configured": True,
@@ -169,3 +226,21 @@ def test_public_container_health_omits_internal_ids_paths_and_images(
     assert "private-run-id" not in serialized
     assert str(tmp_path) not in serialized
     assert "image" not in serialized.lower()
+
+
+def test_mempalace_health_uses_only_constant_time_drawer_count(monkeypatch):
+    class FakeCollection:
+        def count(self):
+            return 42638
+
+        def get(self, *args, **kwargs):
+            raise AssertionError("health telemetry must not enumerate metadata")
+
+    monkeypatch.setattr(mempalace_bridge, "_mp_ok", True)
+    monkeypatch.setattr(mempalace_bridge, "_collection", FakeCollection())
+
+    assert mempalace_bridge.get_health_details() == {
+        "available": True,
+        "enabled": True,
+        "drawers": 42638,
+    }
