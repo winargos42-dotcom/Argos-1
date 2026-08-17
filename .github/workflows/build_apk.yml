@@ -9,6 +9,10 @@ on:
         required: false
         default: debug
         type: string
+      source_ref:
+        description: "Exact source revision to package"
+        required: false
+        type: string
   workflow_dispatch:
     inputs:
       release_mode:
@@ -30,6 +34,8 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4        # было @v5 — не существует
+        with:
+          ref: ${{ inputs.source_ref || github.sha }}
 
       - name: Set up Python 3.10
         uses: actions/setup-python@v5   # было @v6 — не существует
