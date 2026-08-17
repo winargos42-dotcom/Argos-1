@@ -13,6 +13,10 @@ on:
     branches: [main]
   workflow_dispatch:
 
+concurrency:
+  group: argos-release-validation-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   validate:
     name: Test deployed runtime
