@@ -2,6 +2,11 @@ name: CI — Release Validation
 
 on:
   workflow_call:
+    inputs:
+      source_ref:
+        description: "Exact source revision to validate and package"
+        required: false
+        type: string
   push:
     branches: [main, "release/*"]
   pull_request:
@@ -14,6 +19,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.source_ref || github.sha }}
 
       - name: Set up Python 3.10
         uses: actions/setup-python@v5
@@ -40,6 +47,7 @@ jobs:
     uses: ./.github/workflows/build_apk.yml
     with:
       release_mode: debug
+      source_ref: ${{ inputs.source_ref || github.sha }}
     permissions:
       contents: read
 
@@ -50,6 +58,7 @@ jobs:
     uses: ./.github/workflows/build_windows.yml
     with:
       one_file: onefile
+      source_ref: ${{ inputs.source_ref || github.sha }}
     permissions:
       contents: read
 
