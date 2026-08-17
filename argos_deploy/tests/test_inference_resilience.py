@@ -12,9 +12,12 @@ from src.core import ArgosCore
 
 def _dummy_core(ollama_url: str = "http://localhost:11434/api/generate"):
     dummy = SimpleNamespace(ollama_url=ollama_url)
-    dummy._ensure_ollama_running = ArgosCore._ensure_ollama_running.__get__(
-        dummy, type(dummy)
-    )
+    for name in (
+        "_set_ollama_unavailable",
+        "_set_ollama_available",
+        "_ensure_ollama_running",
+    ):
+        setattr(dummy, name, getattr(ArgosCore, name).__get__(dummy, type(dummy)))
     return dummy
 
 
@@ -106,6 +109,19 @@ def test_custom_cloud_fallback_uses_configured_openai_endpoint(monkeypatch):
 
 
 def test_custom_cloud_fallback_is_before_ollama_in_auto_mode(monkeypatch):
+    for name in (
+        "OPENAI_API_KEY",
+        "XAI_API_KEY",
+        "GROK_API_KEY",
+        "GROQ_API_KEY",
+        "DEEPSEEK_API_KEY",
+        "GEMINI_API_KEY",
+        "GEMINI_API_KEY_0",
+        "GIGACHAT_API_KEY",
+        "YANDEX_IAM_TOKEN",
+        "KIMI_API_KEY",
+    ):
+        monkeypatch.delenv(name, raising=False)
     monkeypatch.setenv("ARGOS_INFERENCE_URL", "https://inference.example/v1")
     monkeypatch.setenv("ARGOS_INFERENCE_MODEL", "argos-cloud")
 
