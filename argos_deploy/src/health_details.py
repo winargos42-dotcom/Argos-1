@@ -305,9 +305,14 @@ class HealthDetailsCollector:
             return self._cached
 
 
-_DEFAULT_COLLECTOR = HealthDetailsCollector(
-    ttl_seconds=float(os.getenv("ARGOS_HEALTH_DETAILS_TTL", "15") or "15")
-)
+def _configured_ttl() -> float:
+    try:
+        return float(os.getenv("ARGOS_HEALTH_DETAILS_TTL", "15") or "15")
+    except ValueError:
+        return 15.0
+
+
+_DEFAULT_COLLECTOR = HealthDetailsCollector(ttl_seconds=_configured_ttl())
 
 
 def get_cached_health_details(
