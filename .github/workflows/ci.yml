@@ -30,7 +30,7 @@ jobs:
       - name: Install test dependencies
         run: |
           python -m pip install --upgrade pip
-          python -m pip install             pytest pytest-cov chardet PyYAML             python-dotenv requests psutil fastapi uvicorn httpx pydantic             redis GitPython numpy scikit-learn cryptography packaging             aiofiles aiosqlite SQLAlchemy argon2-cffi beautifulsoup4 huggingface-hub
+          python -m pip install             pytest pytest-asyncio pytest-cov chardet PyYAML             python-dotenv requests psutil fastapi uvicorn httpx pydantic             redis GitPython numpy scikit-learn cryptography packaging             aiofiles aiosqlite SQLAlchemy argon2-cffi beautifulsoup4             huggingface-hub openai
 
       - name: Validate deployed Python syntax
         run: |
@@ -43,6 +43,7 @@ jobs:
         run: >-
           python -m pytest --rootdir=. -c /dev/null tests
           --ignore=tests/generated
+          --import-mode=importlib
           --cov=src --cov-fail-under=30 -q --tb=short
 
   build-apk:
