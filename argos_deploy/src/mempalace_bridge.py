@@ -39,7 +39,7 @@ _COLLECTION = "argos_palace"
 
 # ── Lazy imports ────────────────────────────────────────────────────────────
 _mp_ok = False
-_mp_init_attempted = False
+_mp_last_init_attempt_at = 0.0
 _mp_error: str | None = None
 _chromadb_client = None
 _collection = None
@@ -47,22 +47,39 @@ _init_lock = threading.Lock()
 
 
 def _ensure_init() -> bool:
-    """Initialize ChromaDB once per process (lazy and thread-safe)."""
-    global _mp_ok, _mp_init_attempted, _mp_error
+    """Initialize ChromaDB lazily with a bounded retry cooldown."""
+    global _mp_ok, _mp_last_init_attempt_at, _mp_error
     global _chromadb_client, _collection
     if _mp_ok:
         return True
     if not _MEMPALACE_ENABLED:
         _mp_error = "disabled"
         return False
-    if _mp_init_attempted:
+
+    try:
+        retry_seconds = int(
+            os.getenv("ARGOS_MEMPALACE_RETRY_SECONDS", "300")
+        )
+    except ValueError:
+        retry_seconds = 300
+    retry_seconds = max(30, min(retry_seconds, 3600))
+    now = time.time()
+    if (
+        _mp_last_init_attempt_at
+        and now - _mp_last_init_attempt_at < retry_seconds
+    ):
         return False
+
     with _init_lock:
         if _mp_ok:
             return True
-        if _mp_init_attempted:
+        now = time.time()
+        if (
+            _mp_last_init_attempt_at
+            and now - _mp_last_init_attempt_at < retry_seconds
+        ):
             return False
-        _mp_init_attempted = True
+        _mp_last_init_attempt_at = now
         try:
             import chromadb
 
