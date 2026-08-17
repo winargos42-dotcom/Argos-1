@@ -326,50 +326,20 @@ def get_memory_context(query: str = "", wing: str = "") -> str:
 
 
 def get_health_details() -> dict:
-    """Structured, secret-free MemPalace telemetry for /health/details."""
+    """Cheap, secret-free MemPalace telemetry for /health/details."""
     if not _ensure_init():
         return {
             "available": False,
             "reason": _mp_error or "unavailable",
             "enabled": _MEMPALACE_ENABLED,
             "drawers": None,
-            "wings": {},
-            "path": _PALACE_PATH,
-            "storage_bytes": None,
         }
 
     try:
-        drawers = int(_collection.count())
-        wings: dict[str, int] = {}
-        try:
-            metadatas = _collection.get(include=["metadatas"]).get(
-                "metadatas", []
-            )
-            for metadata in metadatas:
-                if not isinstance(metadata, dict):
-                    continue
-                wing = str(metadata.get("wing") or "unknown")
-                wings[wing] = wings.get(wing, 0) + 1
-        except Exception:
-            wings = {}
-
-        storage_bytes = 0
-        palace_path = Path(_PALACE_PATH)
-        if palace_path.exists():
-            for item in palace_path.rglob("*"):
-                try:
-                    if item.is_file():
-                        storage_bytes += item.stat().st_size
-                except OSError:
-                    continue
-
         return {
             "available": True,
             "enabled": True,
-            "drawers": drawers,
-            "wings": wings,
-            "path": _PALACE_PATH,
-            "storage_bytes": storage_bytes,
+            "drawers": int(_collection.count()),
         }
     except Exception as exc:
         return {
@@ -377,9 +347,6 @@ def get_health_details() -> dict:
             "reason": f"status_error:{type(exc).__name__}",
             "enabled": True,
             "drawers": None,
-            "wings": {},
-            "path": _PALACE_PATH,
-            "storage_bytes": None,
         }
 
 
