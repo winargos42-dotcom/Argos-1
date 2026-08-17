@@ -82,8 +82,6 @@ def test_endpoints():
     test_paths = ["/status", "/chat", "/api", "/health"]
     for i, path in enumerate(test_paths, 4):
         print(f"\n{i}. Тест {path}:")
-        if path in
-        print(f"\n{i}. Тест {path}:")
         if path in ["/chat"]:
             debug_request("POST", path, {"message": "test"})
         else:
