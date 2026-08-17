@@ -244,3 +244,31 @@ def test_mempalace_health_uses_only_constant_time_drawer_count(monkeypatch):
         "enabled": True,
         "drawers": 42638,
     }
+
+
+def test_health_cache_reuses_sanitized_initialization_failure(monkeypatch):
+    calls = []
+
+    def fake_build(**kwargs):
+        calls.append(kwargs)
+        return {
+            "service": {
+                "ready": False,
+                "error": "initialization_failed",
+            }
+        }
+
+    monkeypatch.setattr(health_details, "build_health_details", fake_build)
+    collector = health_details.HealthDetailsCollector(ttl_seconds=60)
+    args = {
+        "ready": False,
+        "init_error": "private path /app/persist",
+        "boot_time": 0.0,
+        "core": None,
+    }
+
+    first = collector.get(**args)
+    second = collector.get(**args)
+
+    assert first is second
+    assert len(calls) == 1
