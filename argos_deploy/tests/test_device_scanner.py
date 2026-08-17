@@ -134,6 +134,18 @@ class TestDeviceScanner:
 # ── AdaptiveImageBuilder ───────────────────────────────────────────────────
 
 class TestAdaptiveImageBuilder:
+    @pytest.fixture(autouse=True)
+    def _minimal_source_tree(self, tmp_path, monkeypatch):
+        """Build test archives from a tiny source tree, not the whole checkout."""
+        source_dir = tmp_path / "source"
+        source_dir.mkdir()
+        (source_dir / "main.py").write_text("print('argos')\n", encoding="utf-8")
+        (source_dir / "requirements.txt").write_text(
+            "requests\npython-dotenv\npsutil\n",
+            encoding="utf-8",
+        )
+        monkeypatch.chdir(source_dir)
+
     def test_build_for_this_device_creates_zip(self, tmp_path):
         builder = AdaptiveImageBuilder(output_dir=str(tmp_path))
         result  = builder.build_for_this_device(version="0.0.1")
