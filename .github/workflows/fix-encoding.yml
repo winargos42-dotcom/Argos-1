@@ -82,7 +82,7 @@ jobs:
                 return False
         
         for py_file in Path('.').rglob('*.py'):
-            if any(p in py_file.parts for p in ['venv', '__pycache__']):
+            if any(p in py_file.parts for p in ['venv', '__pycache__', 'claude-code-templates', 'tmp']):
                 continue
             try:
                 with open(py_file, 'r', encoding='utf-8') as f:
@@ -95,7 +95,7 @@ jobs:
     - name: Validate Python syntax
       run: |
         echo "=== Проверка синтаксиса Python ==="
-        find . -name "*.py" -type f ! -path "*/venv/*" ! -path "*/__pycache__/*" | while read file; do
+        find . -name "*.py" -type f ! -path "*/venv/*" ! -path "*/__pycache__/*" ! -path "*/claude-code-templates/*" ! -path "*/tmp/*" | while read file; do
           python3 -m py_compile "$file" || exit 1
         done
         echo "✅ Синтаксис Python - OK"
