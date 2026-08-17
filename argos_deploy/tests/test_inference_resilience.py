@@ -11,7 +11,11 @@ from src.core import ArgosCore
 
 
 def _dummy_core(ollama_url: str = "http://localhost:11434/api/generate"):
-    dummy = SimpleNamespace(ollama_url=ollama_url)
+    dummy = SimpleNamespace(
+        ollama_url=ollama_url,
+        _ollama_unavailable_until=0.0,
+        _ollama_unavailable_permanent=False,
+    )
     for name in (
         "_set_ollama_unavailable",
         "_set_ollama_available",
@@ -162,6 +166,9 @@ def test_inference_health_never_returns_credentials(monkeypatch):
         _provider_disabled_until={},
         _provider_disable_reason={},
         _provider_disabled_permanent={},
+        _has_gigachat_config=no,
+        _has_yandexgpt_config=no,
+        _has_kimi_config=no,
     )
 
     payload = ArgosCore.inference_health(dummy)
