@@ -139,7 +139,7 @@ jobs:
           profile: pixel_6
           disable-animations: true
           script: |
-            set -euo pipefail
+            set -eu
             APK="$(find artifacts -name '*.apk' -print -quit)"
             test -n "$APK"
             adb install -r "$APK"
