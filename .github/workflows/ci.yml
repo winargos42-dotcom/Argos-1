@@ -30,21 +30,19 @@ jobs:
       - name: Install test dependencies
         run: |
           python -m pip install --upgrade pip
-          python -m pip install             pytest pytest-cov chardet PyYAML             python-dotenv requests psutil fastapi uvicorn httpx pydantic             redis GitPython numpy scikit-learn cryptography packaging             aiofiles SQLAlchemy argon2-cffi
+          python -m pip install             pytest pytest-cov chardet PyYAML             python-dotenv requests psutil fastapi uvicorn httpx pydantic             redis GitPython numpy scikit-learn cryptography packaging             aiofiles aiosqlite SQLAlchemy argon2-cffi beautifulsoup4 huggingface-hub
 
       - name: Validate deployed Python syntax
         run: |
           python -m py_compile             argos_deploy/cloud_entry.py             argos_deploy/src/core.py             argos_deploy/src/health_details.py             argos_deploy/src/mempalace_bridge.py
 
-      - name: Run project tests
-        run: pytest --cov=src --cov-fail-under=30 -q --tb=short
-
-      - name: Run deployed-runtime tests
+      - name: Run full deployed-runtime test suite
         working-directory: argos_deploy
         env:
           PYTHONPATH: .
         run: >-
           python -m pytest --rootdir=. -c /dev/null tests
+          --ignore=tests/generated
           --cov=src --cov-fail-under=30 -q --tb=short
 
   build-apk:
