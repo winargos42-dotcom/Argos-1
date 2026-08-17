@@ -39,21 +39,30 @@ _COLLECTION = "argos_palace"
 
 # ── Lazy imports ────────────────────────────────────────────────────────────
 _mp_ok = False
+_mp_init_attempted = False
+_mp_error: str | None = None
 _chromadb_client = None
 _collection = None
 _init_lock = threading.Lock()
 
 
 def _ensure_init() -> bool:
-    """Инициализация ChromaDB (lazy, thread-safe)."""
-    global _mp_ok, _chromadb_client, _collection
+    """Initialize ChromaDB once per process (lazy and thread-safe)."""
+    global _mp_ok, _mp_init_attempted, _mp_error
+    global _chromadb_client, _collection
     if _mp_ok:
         return True
     if not _MEMPALACE_ENABLED:
+        _mp_error = "disabled"
+        return False
+    if _mp_init_attempted:
         return False
     with _init_lock:
         if _mp_ok:
             return True
+        if _mp_init_attempted:
+            return False
+        _mp_init_attempted = True
         try:
             import chromadb
 
@@ -64,11 +73,18 @@ def _ensure_init() -> bool:
                 metadata={"hnsw:space": "cosine"},
             )
             _mp_ok = True
-            log.info("[MemPalace] Инициализирован: %s (%d drawers)", _PALACE_PATH, _collection.count())
+            _mp_error = None
+            log.info(
+                "[MemPalace] initialized: %s (%d drawers)",
+                _PALACE_PATH,
+                _collection.count(),
+            )
         except ImportError:
-            log.warning("[MemPalace] chromadb не установлен — pip install mempalace")
+            _mp_error = "chromadb_unavailable"
+            log.warning("[MemPalace] chromadb is not installed")
         except Exception as exc:
-            log.warning("[MemPalace] Ошибка инициализации: %s", exc)
+            _mp_error = f"init_error:{type(exc).__name__}"
+            log.warning("[MemPalace] initialization error: %s", exc)
     return _mp_ok
 
 
@@ -290,6 +306,64 @@ def get_memory_context(query: str = "", wing: str = "") -> str:
             parts.append("\n".join(lines))
 
     return "\n\n".join(parts)
+
+
+def get_health_details() -> dict:
+    """Structured, secret-free MemPalace telemetry for /health/details."""
+    if not _ensure_init():
+        return {
+            "available": False,
+            "reason": _mp_error or "unavailable",
+            "enabled": _MEMPALACE_ENABLED,
+            "drawers": None,
+            "wings": {},
+            "path": _PALACE_PATH,
+            "storage_bytes": None,
+        }
+
+    try:
+        drawers = int(_collection.count())
+        wings: dict[str, int] = {}
+        try:
+            metadatas = _collection.get(include=["metadatas"]).get(
+                "metadatas", []
+            )
+            for metadata in metadatas:
+                if not isinstance(metadata, dict):
+                    continue
+                wing = str(metadata.get("wing") or "unknown")
+                wings[wing] = wings.get(wing, 0) + 1
+        except Exception:
+            wings = {}
+
+        storage_bytes = 0
+        palace_path = Path(_PALACE_PATH)
+        if palace_path.exists():
+            for item in palace_path.rglob("*"):
+                try:
+                    if item.is_file():
+                        storage_bytes += item.stat().st_size
+                except OSError:
+                    continue
+
+        return {
+            "available": True,
+            "enabled": True,
+            "drawers": drawers,
+            "wings": wings,
+            "path": _PALACE_PATH,
+            "storage_bytes": storage_bytes,
+        }
+    except Exception as exc:
+        return {
+            "available": False,
+            "reason": f"status_error:{type(exc).__name__}",
+            "enabled": True,
+            "drawers": None,
+            "wings": {},
+            "path": _PALACE_PATH,
+            "storage_bytes": None,
+        }
 
 
 def status() -> str:
