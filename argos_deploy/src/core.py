@@ -2925,15 +2925,27 @@ class ArgosCore:
                         timeout=ollama_timeout,
                     )
                 else:
+                    self._set_ollama_unavailable("model_unavailable")
                     return None
             response_text = res.json().get("response") if res.ok else None
             if response_text:
+                self._set_ollama_available()
+                self._last_inference_provider = "Ollama"
                 log.info("[Ollama HTTP] ✅ Ответ получен (%d симв.)", len(response_text))
             else:
+                reason = (
+                    f"http_{res.status_code}"
+                    if not res.ok
+                    else "empty_response"
+                )
+                self._set_ollama_unavailable(reason)
                 log.warning("[Ollama HTTP] Пустой ответ (HTTP %s)", res.status_code)
             return response_text
 
         except Exception as e:
+            self._set_ollama_unavailable(
+                f"request_failed:{type(e).__name__}"
+            )
             log.error("[Ollama] Ошибка: %s", e)
             return None
 
@@ -3061,6 +3073,9 @@ class ArgosCore:
                 available = False
             elif is_disabled:
                 status = "disabled"
+                available = False
+            elif errors.get(name):
+                status = "unavailable"
                 available = False
             elif last_success:
                 status = "available"
