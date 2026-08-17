@@ -45,23 +45,50 @@ jobs:
         working-directory: argos_deploy
         env:
           PYTHONPATH: .
-        run: >-
-          python -m pytest --rootdir=. -c ../pytest.ini
-          tests/test_inference_resilience.py
-          --import-mode=importlib
-          --timeout=30 --timeout-method=thread
-          -vv --tb=short
+        run: |
+          python -m coverage erase
+          python -m pytest --rootdir=. -c ../pytest.ini \
+            tests/test_inference_resilience.py \
+            --import-mode=importlib \
+            --timeout=30 --timeout-method=thread \
+            --cov=src --cov-append --cov-report= \
+            -vv --tb=short
 
-      - name: Run remaining deployed-runtime test suite
+      - name: Run remaining tests in isolated file processes
         working-directory: argos_deploy
         env:
           PYTHONPATH: .
-        run: >-
-          python -m pytest --rootdir=. -c ../pytest.ini tests
-          --ignore=tests/test_inference_resilience.py
-          --import-mode=importlib
-          --timeout=120 --timeout-method=thread
-          --cov=src --cov-fail-under=30 -q --tb=short
+        run: |
+          set -euo pipefail
+          mapfile -t test_files < <(
+            python - <<'PY'
+          from pathlib import Path
+
+          config = Path("../pytest.ini").read_text(encoding="utf-8")
+          ignored = {
+              line.strip().removeprefix("--ignore=")
+              for line in config.splitlines()
+              if line.strip().startswith("--ignore=tests/test_")
+          }
+          ignored.add("tests/test_inference_resilience.py")
+          for test_file in sorted(Path("tests").glob("test_*.py")):
+              if test_file.as_posix() not in ignored:
+                  print(test_file.as_posix())
+          PY
+          )
+          for test_file in "${test_files[@]}"; do
+            echo "::group::${test_file}"
+            python -m pytest --rootdir=. -c ../pytest.ini "$test_file" \
+              --import-mode=importlib \
+              --timeout=120 --timeout-method=thread \
+              --cov=src --cov-append --cov-report= \
+              -q --tb=short
+            echo "::endgroup::"
+          done
+
+      - name: Enforce aggregate coverage
+        working-directory: argos_deploy
+        run: python -m coverage report --fail-under=30
 
   build-apk:
     name: APK after tests
