@@ -1,6 +1,7 @@
 name: CI — Release Validation
 
 on:
+  workflow_call:
   push:
     branches: [main, "release/*"]
   pull_request:
