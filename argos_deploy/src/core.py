@@ -314,6 +314,12 @@ class ArgosCore:
         except Exception:
             self._internal_admin = None
         self.ollama_url     = os.getenv("OLLAMA_HOST", "http://localhost:11434").rstrip("/") + "/api/generate"
+        self._ollama_status = "unknown"
+        self._ollama_last_error: str | None = None
+        self._ollama_last_checked_at: float | None = None
+        self._ollama_unavailable_until = 0.0
+        self._ollama_unavailable_permanent = False
+        self._last_inference_provider: str | None = None
         self.opi            = None  # Orange Pi One bridge
         self.ai_mode    = self._normalize_ai_mode(os.getenv("ARGOS_AI_MODE", "auto"))
         self._persona_profile_name = ""
@@ -386,6 +392,8 @@ class ArgosCore:
         self._provider_disabled_until: dict[str, float] = {}
         self._provider_disable_reason: dict[str, str] = {}
         self._provider_disabled_permanent: dict[str, str] = {}
+        self._provider_last_success_at: dict[str, float] = {}
+        self._provider_last_error: dict[str, str] = {}
         self.auto_collab_enabled = os.getenv("ARGOS_AUTO_COLLAB", "on").strip().lower() not in {"0", "false", "off", "no", "нет"}
         self.auto_collab_max_models = max(2, min(int(os.getenv("ARGOS_AUTO_COLLAB_MAX_MODELS", "8") or "8"), 16))
         self.homeostasis = None
@@ -1998,6 +2006,9 @@ class ArgosCore:
 
     def _disable_provider_temporarily(self, provider_name: str, reason: str) -> None:
         reason_lower = reason.lower() if isinstance(reason, str) else ""
+        last_errors = getattr(self, "_provider_last_error", None)
+        if isinstance(last_errors, dict):
+            last_errors[provider_name] = reason
         if any(x in reason_lower for x in _PERMANENT_PROVIDER_ERROR_MARKERS):
             if provider_name not in self._provider_disabled_permanent:
                 self._provider_disabled_permanent[provider_name] = reason
@@ -2289,120 +2300,160 @@ class ArgosCore:
 
     def _ask_openai_compat(self, context: str, user_text: str,
                            provider_name: str = "Groq") -> str | None:
-        """Универсальный клиент для OpenAI-совместимых API.
+        """Universal client for configured OpenAI-compatible APIs.
 
-        Провайдер выбирается по ``provider_name``:
-          - "Groq"     → GROQ_API_KEY, https://api.groq.com/openai/v1
-          - "DeepSeek" → DEEPSEEK_API_KEY, https://api.deepseek.com/v1
-          - "OpenAI"   → OPENAI_API_KEY, https://api.openai.com/v1
-          - "Grok"     → XAI_API_KEY или GROK_API_KEY, https://api.x.ai/v1
+        CloudFallback is opt-in and uses ARGOS_INFERENCE_URL,
+        ARGOS_INFERENCE_MODEL, and optional ARGOS_INFERENCE_API_KEY.
         """
         if self._is_provider_temporarily_disabled(provider_name):
             return None
 
-        _cf_account = os.getenv("CLOUDFLARE_ACCOUNT_ID", "").strip()
-        _cf_base = f"https://api.cloudflare.com/client/v4/accounts/{_cf_account}/ai/v1" if _cf_account else ""
+        custom_base = (os.getenv("ARGOS_INFERENCE_URL", "") or "").strip().rstrip("/")
+        custom_model = (os.getenv("ARGOS_INFERENCE_MODEL", "") or "").strip()
+        cf_account = os.getenv("CLOUDFLARE_ACCOUNT_ID", "").strip()
+        cf_base = (
+            f"https://api.cloudflare.com/client/v4/accounts/{cf_account}/ai/v1"
+            if cf_account else ""
+        )
         cfg = {
             "Groq":       (("GROQ_API_KEY",),               "https://api.groq.com/openai/v1", "llama3-70b-8192"),
             "DeepSeek":   (("DEEPSEEK_API_KEY",),           "https://api.deepseek.com/v1",    "deepseek-chat"),
             "OpenAI":     (("OPENAI_API_KEY",),             "https://api.openai.com/v1",      "gpt-4o-mini"),
             "Grok":       (("XAI_API_KEY", "GROK_API_KEY"), "https://api.x.ai/v1",            "grok-3-mini-beta"),
-            "Cloudflare": (("CLOUDFLARE_API_TOKEN",),       _cf_base,                         "@cf/moonshotai/kimi-k2.5"),
+            "Cloudflare": (("CLOUDFLARE_API_TOKEN",),       cf_base,                            "@cf/moonshotai/kimi-k2.5"),
+            "CloudFallback": (("ARGOS_INFERENCE_API_KEY",), custom_base, custom_model),
         }
         if provider_name not in cfg:
             return None
 
         env_keys, base_url, default_model = cfg[provider_name]
+        if not base_url or not default_model:
+            return None
+
         api_key = None
         for env_key in env_keys:
             api_key = _read_secret_env(env_key)
             if api_key:
                 break
-        if not api_key:
+        if not api_key and provider_name != "CloudFallback":
             return None
 
-        # Проверяем хост
         import urllib.parse as _up
         parsed = _up.urlparse(base_url)
-        if not self._is_host_reachable(parsed.hostname, 443):
-            log.debug("%s: хост недоступен — пропуск", provider_name)
+        port = parsed.port or (443 if parsed.scheme == "https" else 80)
+        if not parsed.hostname or not self._is_host_reachable(parsed.hostname, port):
+            reason = "host_unreachable"
+            last_errors = getattr(self, "_provider_last_error", None)
+            if isinstance(last_errors, dict):
+                last_errors[provider_name] = reason
+            log.debug("%s: host unavailable — skipped", provider_name)
             return None
 
         try:
             hist = self.context.get_prompt_context()
-            model = os.getenv(f"{provider_name.upper()}_MODEL", default_model).strip() or default_model
+            if provider_name == "CloudFallback":
+                model = default_model
+            else:
+                model = os.getenv(
+                    f"{provider_name.upper()}_MODEL", default_model
+                ).strip() or default_model
 
-            # Groq free-tier лимит ~12 000 TPM; обрезаем контекст чтобы не превысить.
-            # Грубая оценка: 1 токен ≈ 4 символа.
-            _MAX_HIST_CHARS = 6000   # ~1500 токенов на историю
-            _MAX_CTX_CHARS  = 3000   # ~750 токенов на системный контекст
-            if len(hist) > _MAX_HIST_CHARS:
-                hist = hist[-_MAX_HIST_CHARS:]   # берём хвост (самые свежие сообщения)
-            if len(context) > _MAX_CTX_CHARS:
-                context = context[:_MAX_CTX_CHARS]
+            max_hist_chars = 6000
+            max_ctx_chars = 3000
+            if len(hist) > max_hist_chars:
+                hist = hist[-max_hist_chars:]
+            if len(context) > max_ctx_chars:
+                context = context[:max_ctx_chars]
 
             def _build_payload(hist_str: str) -> dict:
                 return {
                     "model": model,
                     "messages": [
                         {"role": "system", "content": context},
-                        {"role": "user",   "content": f"{hist_str}\n\n{user_text}" if hist_str else user_text},
+                        {
+                            "role": "user",
+                            "content": (
+                                f"{hist_str}\n\n{user_text}"
+                                if hist_str else user_text
+                            ),
+                        },
                     ],
                     "temperature": 0.4,
                     "max_tokens": 1200,
                 }
 
-            _timeout = 120 if provider_name == "Cloudflare" else 30
-            payload = _build_payload(hist)
+            headers = {"Content-Type": "application/json"}
+            if api_key:
+                headers["Authorization"] = f"Bearer {api_key}"
+
+            timeout = 120 if provider_name == "Cloudflare" else 30
             response = requests.post(
                 f"{base_url}/chat/completions",
-                headers={
-                    "Authorization": f"Bearer {api_key}",
-                    "Content-Type":  "application/json",
-                },
-                json=payload,
-                timeout=_timeout,
+                headers=headers,
+                json=_build_payload(hist),
+                timeout=timeout,
             )
 
-            # 413 — запрос слишком большой; повторяем без истории
             if response.status_code == 413:
                 log.warning(
-                    "%s: HTTP 413 (payload too large) — повтор без истории контекста",
+                    "%s: HTTP 413 (payload too large) — retrying without history",
                     provider_name,
                 )
-                payload = _build_payload("")
                 response = requests.post(
                     f"{base_url}/chat/completions",
-                    headers={
-                        "Authorization": f"Bearer {api_key}",
-                        "Content-Type":  "application/json",
-                    },
-                    json=payload,
+                    headers=headers,
+                    json=_build_payload(""),
                     timeout=30,
                 )
 
             if not response.ok:
+                reason = f"http_{response.status_code}"
+                last_errors = getattr(self, "_provider_last_error", None)
+                if isinstance(last_errors, dict):
+                    last_errors[provider_name] = reason
                 if response.status_code == 429:
-                    self._disable_provider_temporarily(provider_name, "квота исчерпана (429)")
+                    self._disable_provider_temporarily(
+                        provider_name, "квота исчерпана (429)"
+                    )
                 elif response.status_code == 402:
-                    # Недостаточно баланса — отключаем на 24 часа
                     self._provider_disabled_until[provider_name] = time.time() + 86400
-                    self._provider_disable_reason[provider_name] = "недостаточно баланса (402)"
-                    log.warning("%s отключен на 24ч: нет баланса", provider_name)
+                    self._provider_disable_reason[provider_name] = (
+                        "недостаточно баланса (402)"
+                    )
+                    log.warning("%s disabled for 24h: insufficient balance", provider_name)
                 elif response.status_code in (401, 403):
                     self._disable_provider_temporarily(
-                        provider_name, f"ошибка авторизации HTTP {response.status_code}"
+                        provider_name,
+                        f"ошибка авторизации HTTP {response.status_code}",
                     )
-                log.error("%s: HTTP %s %s", provider_name, response.status_code, response.text[:300])
+                log.error(
+                    "%s: HTTP %s %s",
+                    provider_name,
+                    response.status_code,
+                    response.text[:300],
+                )
                 return None
 
             choices = response.json().get("choices") or []
             if not choices:
                 return None
             text = (choices[0].get("message") or {}).get("content")
-            return text.strip() if isinstance(text, str) else None
-        except Exception as e:
-            log.error("%s: %s", provider_name, e)
+            if not isinstance(text, str) or not text.strip():
+                return None
+
+            successes = getattr(self, "_provider_last_success_at", None)
+            if isinstance(successes, dict):
+                successes[provider_name] = time.time()
+            last_errors = getattr(self, "_provider_last_error", None)
+            if isinstance(last_errors, dict):
+                last_errors.pop(provider_name, None)
+            self._last_inference_provider = provider_name
+            return text.strip()
+        except Exception as exc:
+            last_errors = getattr(self, "_provider_last_error", None)
+            if isinstance(last_errors, dict):
+                last_errors[provider_name] = type(exc).__name__
+            log.error("%s: %s", provider_name, exc)
             return None
 
     def _ask_grok(self, context: str, user_text: str) -> str | None:
@@ -2419,124 +2470,167 @@ class ArgosCore:
     _ollama_start_lock = threading.Lock()
     _ollama_proc: "subprocess.Popen | None" = None
 
-    def _ensure_ollama_running(self) -> bool:
-        """Жёсткий авто-старт Ollama: поднимает сервис если он не отвечает.
-
-        Работает на Windows 10/11, Linux и macOS.
-        На Windows Ollama устанавливается как системный процесс, но если он
-        не запущен — метод запускает его явно через subprocess.
-
-        Returns:
-            True  — Ollama доступна (уже работала или успешно запущена).
-            False — не удалось запустить.
-        """
-        import platform as _platform
-        base_url = self.ollama_url.replace("/api/generate", "")
-        ping_url = base_url.rstrip("/") + "/api/tags"
-
-        log.info("[Ollama] Проверяю доступность: %s", ping_url)
-
-        # Быстрая проверка — уже работает?
+    def _set_ollama_unavailable(
+        self,
+        reason: str,
+        *,
+        permanent: bool = False,
+        now: float | None = None,
+    ) -> None:
+        now = time.time() if now is None else now
+        self._ollama_status = "unavailable"
+        self._ollama_last_error = reason
+        self._ollama_last_checked_at = now
+        self._ollama_unavailable_permanent = permanent
+        if permanent:
+            self._ollama_unavailable_until = float("inf")
+            return
         try:
-            requests.get(ping_url, timeout=3)
-            log.info("[Ollama] ✅ Уже запущен (%s)", ping_url)
-            return True
-        except Exception as _e:
-            log.info("[Ollama] Не отвечает при быстрой проверке: %s", _e)
+            retry_seconds = int(os.getenv("ARGOS_OLLAMA_RETRY_SECONDS", "900"))
+        except ValueError:
+            retry_seconds = 900
+        retry_seconds = max(30, min(retry_seconds, 86400))
+        self._ollama_unavailable_until = now + retry_seconds
+
+    def _set_ollama_available(self, *, now: float | None = None) -> None:
+        self._ollama_status = "available"
+        self._ollama_last_error = None
+        self._ollama_last_checked_at = time.time() if now is None else now
+        self._ollama_unavailable_until = 0.0
+        self._ollama_unavailable_permanent = False
+        self._last_inference_provider = "Ollama"
+
+    def _ensure_ollama_running(self) -> bool:
+        """Probe Ollama once and bound all retries with a circuit breaker."""
+        import platform as _platform
+        import shutil as _shutil
+        import urllib.parse as _urlparse
+
+        now = time.time()
+        if getattr(self, "_ollama_unavailable_permanent", False):
+            return False
+        if float(getattr(self, "_ollama_unavailable_until", 0.0) or 0.0) > now:
+            return False
+
+        base_url = self.ollama_url.replace("/api/generate", "").rstrip("/")
+        ping_url = f"{base_url}/api/tags"
+        parsed = _urlparse.urlparse(base_url)
+        host = (parsed.hostname or "").lower()
+        local_hosts = {"localhost", "127.0.0.1", "::1"}
+        is_local = host in local_hosts
 
         with ArgosCore._ollama_start_lock:
-            # Повторная проверка под локом
+            now = time.time()
+            if getattr(self, "_ollama_unavailable_permanent", False):
+                return False
+            if float(getattr(self, "_ollama_unavailable_until", 0.0) or 0.0) > now:
+                return False
+
+            self._ollama_last_checked_at = now
             try:
-                requests.get(ping_url, timeout=3)
-                log.info("[Ollama] ✅ Уже запущен (подтверждено под локом)")
+                response = requests.get(ping_url, timeout=3)
+                status_code = int(getattr(response, "status_code", 200) or 200)
+                if status_code >= 400:
+                    raise RuntimeError(f"HTTP {status_code}")
+                self._set_ollama_available(now=now)
+                log.info("[Ollama] available: %s", ping_url)
                 return True
-            except Exception:
-                pass
+            except Exception as probe_error:
+                log.debug("[Ollama] probe failed: %s", probe_error)
 
-            log.warning("[Ollama] Сервис не отвечает — запускаю автоматически…")
+            if not is_local:
+                self._set_ollama_unavailable("remote_unreachable", now=now)
+                log.warning(
+                    "[Ollama] remote endpoint unavailable; next probe is delayed: %s",
+                    ping_url,
+                )
+                return False
 
-            # На Windows: ищем ollama.exe в стандартных путях установки
+            autostart = (
+                os.getenv("ARGOS_OLLAMA_AUTOSTART", "true").strip().lower()
+                not in {"0", "false", "off", "no", "нет"}
+            )
+            if not autostart:
+                self._set_ollama_unavailable("autostart_disabled", now=now)
+                log.warning("[Ollama] local autostart is disabled")
+                return False
+
             is_windows = _platform.system() == "Windows"
+            ollama_cmd = _shutil.which("ollama")
+            if is_windows and not ollama_cmd:
+                public_cmd = r"C:\Users\Public\ollama\ollama.exe"
+                if os.path.isfile(public_cmd):
+                    ollama_cmd = public_cmd
 
-            # ── GPU-окружение для Ollama ──────────────────────────────
-            # Все переменные берём из .env / системного окружения
-            _gpu_env = os.environ.copy()
+            if not ollama_cmd:
+                self._set_ollama_unavailable(
+                    "binary_not_found", permanent=True, now=now
+                )
+                log.error(
+                    "[Ollama] executable not found; circuit opened until restart"
+                )
+                return False
 
-            # AMD ROCm — обязательно для RX 5xxx/6xxx/7xxx
-            _hsa = os.getenv("HSA_OVERRIDE_GFX_VERSION", "")
-            if _hsa:
-                _gpu_env["HSA_OVERRIDE_GFX_VERSION"] = _hsa
-                log.info("[Ollama] AMD ROCm: HSA_OVERRIDE_GFX_VERSION=%s", _hsa)
+            gpu_env = os.environ.copy()
+            hsa = os.getenv("HSA_OVERRIDE_GFX_VERSION", "")
+            if hsa:
+                gpu_env["HSA_OVERRIDE_GFX_VERSION"] = hsa
+            cuda_dev = os.getenv("CUDA_VISIBLE_DEVICES", "")
+            if cuda_dev:
+                gpu_env["CUDA_VISIBLE_DEVICES"] = cuda_dev
+            gpu_layers = os.getenv("OLLAMA_GPU_LAYERS", "-1")
+            gpu_env["OLLAMA_GPU_LAYERS"] = gpu_layers
+            vram_limit = os.getenv("OLLAMA_MAX_VRAM", "0")
+            if vram_limit and vram_limit != "0":
+                gpu_env["OLLAMA_MAX_VRAM"] = vram_limit
 
-            # NVIDIA CUDA — ограничение видимых карт
-            _cuda_dev = os.getenv("CUDA_VISIBLE_DEVICES", "")
-            if _cuda_dev:
-                _gpu_env["CUDA_VISIBLE_DEVICES"] = _cuda_dev
-
-            # Количество слоёв на GPU (глобальный дефолт для Ollama)
-            _gpu_layers = os.getenv("OLLAMA_GPU_LAYERS", "-1")
-            _gpu_env["OLLAMA_GPU_LAYERS"] = _gpu_layers   # не стандарт, но некоторые сборки читают
-
-            # Ограничение памяти на GPU (МБ), 0 = авто
-            _vram_limit = os.getenv("OLLAMA_MAX_VRAM", "0")
-            if _vram_limit and _vram_limit != "0":
-                _gpu_env["OLLAMA_MAX_VRAM"] = _vram_limit
-
-            # ── Путь к Ollama ─────────────────────────────────────────
+            popen_kwargs: dict = {
+                "stdout": subprocess.DEVNULL,
+                "stderr": subprocess.DEVNULL,
+                "env": gpu_env,
+            }
             if is_windows:
-                import shutil
-                ollama_cmd = shutil.which("ollama") or r"C:\Users\Public\ollama\ollama.exe"
-                popen_kwargs: dict = {
-                    "stdout": subprocess.DEVNULL,
-                    "stderr": subprocess.DEVNULL,
-                    "creationflags": subprocess.CREATE_NO_WINDOW,
-                    "env": _gpu_env,
-                }
-            else:
-                ollama_cmd = "ollama"
-                popen_kwargs = {
-                    "stdout": subprocess.DEVNULL,
-                    "stderr": subprocess.DEVNULL,
-                    "env": _gpu_env,
-                }
-
-            log.info("[Ollama] Команда запуска: %s serve (gpu_layers=%s)", ollama_cmd, _gpu_layers)
+                popen_kwargs["creationflags"] = subprocess.CREATE_NO_WINDOW
 
             try:
                 ArgosCore._ollama_proc = subprocess.Popen(
-                    [ollama_cmd, "serve"],
-                    **popen_kwargs,
+                    [ollama_cmd, "serve"], **popen_kwargs
                 )
-                log.info("[Ollama] Процесс запущен (PID %s), жду готовности…", ArgosCore._ollama_proc.pid)
             except FileNotFoundError:
+                self._set_ollama_unavailable(
+                    "binary_not_found", permanent=True, now=now
+                )
                 log.error(
-                    "[Ollama] Исполняемый файл ollama не найден (путь: %s). "
-                    "Скачай с https://ollama.com и установи.",
-                    ollama_cmd,
+                    "[Ollama] executable disappeared; circuit opened until restart"
                 )
                 return False
             except Exception as exc:
-                log.error("[Ollama] Не удалось запустить: %s", exc)
+                self._set_ollama_unavailable(
+                    f"start_failed:{type(exc).__name__}", now=now
+                )
+                log.error("[Ollama] start failed: %s", exc)
                 return False
 
-            # Ждём готовности — до 30 секунд
             deadline = time.time() + 30
-            _last_progress_log = time.time()
             while time.time() < deadline:
-                time.sleep(1)
                 try:
-                    requests.get(ping_url, timeout=2)
-                    log.info("[Ollama] ✅ Сервис запущен успешно (PID %s)", ArgosCore._ollama_proc.pid)
-                    return True
+                    response = requests.get(ping_url, timeout=2)
+                    status_code = int(
+                        getattr(response, "status_code", 200) or 200
+                    )
+                    if status_code < 400:
+                        self._set_ollama_available()
+                        log.info(
+                            "[Ollama] started successfully (PID %s)",
+                            ArgosCore._ollama_proc.pid,
+                        )
+                        return True
                 except Exception:
                     pass
-                # Логируем прогресс каждые 5 секунд
-                if time.time() - _last_progress_log >= 5:
-                    remaining = max(0, int(deadline - time.time()))
-                    log.info("[Ollama] Жду запуска… осталось ~%d сек", remaining)
-                    _last_progress_log = time.time()
+                time.sleep(1)
 
-            log.error("[Ollama] ❌ Сервис не поднялся за 30 секунд (PID %s)", ArgosCore._ollama_proc.pid)
+            self._set_ollama_unavailable("start_timeout")
+            log.error("[Ollama] service did not become ready within 30 seconds")
             return False
 
     def _ensure_ollama_model(self, model: str) -> bool:
@@ -2891,6 +2985,142 @@ class ArgosCore:
             self._disable_provider_temporarily("OpenClaw", str(e))
             return f"❌ OpenClaw: {str(e)[:100]}" if self.ai_mode == "openclaw" else None
 
+    def inference_health(self) -> dict:
+        """Return secret-free provider and Ollama circuit telemetry."""
+        import urllib.parse as _up
+
+        now = time.time()
+        disabled_until = getattr(self, "_provider_disabled_until", {})
+        disabled_reasons = getattr(self, "_provider_disable_reason", {})
+        disabled_permanent = getattr(self, "_provider_disabled_permanent", {})
+        successes = getattr(self, "_provider_last_success_at", {})
+        errors = getattr(self, "_provider_last_error", {})
+
+        def _safe_url(value: str) -> str | None:
+            value = (value or "").strip()
+            if not value:
+                return None
+            try:
+                parsed = _up.urlsplit(value)
+                host = parsed.hostname or ""
+                if parsed.port:
+                    host = f"{host}:{parsed.port}"
+                return _up.urlunsplit(
+                    (parsed.scheme, host, parsed.path.rstrip("/"), "", "")
+                )
+            except Exception:
+                return None
+
+        configured = {
+            "CloudFallback": bool(
+                (os.getenv("ARGOS_INFERENCE_URL", "") or "").strip()
+                and (os.getenv("ARGOS_INFERENCE_MODEL", "") or "").strip()
+            ),
+            "OpenAI": bool(_read_secret_env("OPENAI_API_KEY")),
+            "Grok": bool(
+                _read_secret_env("XAI_API_KEY")
+                or _read_secret_env("GROK_API_KEY")
+            ),
+            "Groq": bool(_read_secret_env("GROQ_API_KEY")),
+            "DeepSeek": bool(_read_secret_env("DEEPSEEK_API_KEY")),
+            "Cloudflare": bool(
+                _read_secret_env("CLOUDFLARE_API_TOKEN")
+                and (os.getenv("CLOUDFLARE_ACCOUNT_ID", "") or "").strip()
+            ),
+            "Gemini": bool(
+                _read_secret_env("GEMINI_API_KEY")
+                or _read_secret_env("GEMINI_API_KEY_0")
+            ),
+            "GigaChat": bool(self._has_gigachat_config()),
+            "YandexGPT": bool(self._has_yandexgpt_config()),
+            "Kimi": bool(self._has_kimi_config()),
+        }
+        endpoints = {
+            "CloudFallback": _safe_url(
+                os.getenv("ARGOS_INFERENCE_URL", "")
+            ),
+            "OpenAI": "https://api.openai.com/v1",
+            "Grok": "https://api.x.ai/v1",
+            "Groq": "https://api.groq.com/openai/v1",
+            "DeepSeek": "https://api.deepseek.com/v1",
+            "Cloudflare": None,
+            "Gemini": None,
+            "GigaChat": None,
+            "YandexGPT": None,
+            "Kimi": None,
+        }
+
+        providers = {}
+        for name, is_configured in configured.items():
+            permanent_reason = disabled_permanent.get(name)
+            until = float(disabled_until.get(name, 0.0) or 0.0)
+            is_disabled = bool(permanent_reason) or until > now
+            last_success = successes.get(name)
+            if not is_configured:
+                status = "unconfigured"
+                available = False
+            elif is_disabled:
+                status = "disabled"
+                available = False
+            elif last_success:
+                status = "available"
+                available = True
+            else:
+                status = "unknown"
+                available = None
+            providers[name] = {
+                "configured": is_configured,
+                "available": available,
+                "status": status,
+                "endpoint": endpoints.get(name),
+                "last_success_at": last_success,
+                "last_error": (
+                    permanent_reason
+                    or disabled_reasons.get(name)
+                    or errors.get(name)
+                ),
+                "next_probe_at": until if until > now else None,
+            }
+
+        permanent = bool(
+            getattr(self, "_ollama_unavailable_permanent", False)
+        )
+        unavailable_until = float(
+            getattr(self, "_ollama_unavailable_until", 0.0) or 0.0
+        )
+        ollama_status = getattr(self, "_ollama_status", "unknown")
+        providers["Ollama"] = {
+            "configured": bool(getattr(self, "ollama_url", "")),
+            "available": (
+                True if ollama_status == "available"
+                else False if ollama_status == "unavailable"
+                else None
+            ),
+            "status": ollama_status,
+            "endpoint": _safe_url(
+                getattr(self, "ollama_url", "").replace("/api/generate", "")
+            ),
+            "last_checked_at": getattr(
+                self, "_ollama_last_checked_at", None
+            ),
+            "last_error": getattr(self, "_ollama_last_error", None),
+            "permanent": permanent,
+            "next_probe_at": (
+                None
+                if permanent or unavailable_until <= now
+                else unavailable_until
+            ),
+        }
+
+        return {
+            "available": any(
+                p.get("available") is True for p in providers.values()
+            ),
+            "mode": getattr(self, "ai_mode", "auto"),
+            "selected": getattr(self, "_last_inference_provider", None),
+            "providers": providers,
+        }
+
     def _auto_providers(self) -> list[tuple[str, callable]]:
         import functools
         providers = []
@@ -2918,7 +3148,21 @@ class ArgosCore:
                 providers.append(("Kimi", self._ask_kimi))
         if self._has_watsonx_config() and not self._is_provider_temporarily_disabled("WatsonX"):
             providers.append(("WatsonX", self._ask_watsonx))
-        # poilopr57/Argoss — личный помощник, всегда последний fallback
+        custom_url = (os.getenv("ARGOS_INFERENCE_URL", "") or "").strip()
+        custom_model = (os.getenv("ARGOS_INFERENCE_MODEL", "") or "").strip()
+        if (
+            custom_url
+            and custom_model
+            and not self._is_provider_temporarily_disabled("CloudFallback")
+        ):
+            providers.append((
+                "CloudFallback",
+                functools.partial(
+                    self._ask_openai_compat,
+                    provider_name="CloudFallback",
+                ),
+            ))
+        # poilopr57/Argoss — личный помощник, always the last local fallback.
         providers.append(("Ollama (Argoss)", self._ask_ollama))
         if len(providers) <= self.auto_collab_max_models:
             return providers
