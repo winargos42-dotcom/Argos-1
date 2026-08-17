@@ -42,8 +42,7 @@ jobs:
         env:
           PYTHONPATH: .
         run: >-
-          python -m pytest --rootdir=. -c /dev/null tests
-          --ignore=tests/generated
+          python -m pytest --rootdir=. -c ../pytest.ini tests
           --import-mode=importlib
           --timeout=120 --timeout-method=thread
           --cov=src --cov-fail-under=30 -q --tb=short
