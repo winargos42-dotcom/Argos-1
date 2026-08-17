@@ -31,7 +31,7 @@ class ProjectValidator:
         
         python_files = list(self.project_dir.rglob('*.py'))
         python_files = [f for f in python_files if not any(
-            part in f.parts for part in ['venv', '.venv', '__pycache__', 'node_modules']
+            part in f.parts for part in ['venv', '.venv', '__pycache__', 'node_modules', 'claude-code-templates', 'tmp']
         )]
         
         print(f"Найдено Python файлов: {len(python_files)}\n")
@@ -74,7 +74,7 @@ class ProjectValidator:
         
         python_files = list(self.project_dir.rglob('*.py'))
         python_files = [f for f in python_files if not any(
-            part in f.parts for part in ['venv', '.venv', '__pycache__', 'node_modules']
+            part in f.parts for part in ['venv', '.venv', '__pycache__', 'node_modules', 'claude-code-templates', 'tmp']
         )]
         
         import_errors = []
