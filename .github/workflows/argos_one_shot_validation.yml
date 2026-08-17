@@ -2,7 +2,7 @@ name: ARGOS One-Shot Release Validation
 
 on:
   schedule:
-    - cron: "2 4 17 8 *"
+    - cron: "17 4 17 8 *"
   workflow_dispatch:
 
 concurrency:
