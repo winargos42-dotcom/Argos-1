@@ -14,8 +14,8 @@ concurrency:
 jobs:
   validate-release:
     name: Run pinned ARGOS release validation
-    uses: winargos42-dotcom/Argos-1/.github/workflows/ci.yml@6fc1aa3e2a08b9d1b655fb7ed29a0bc532a4d480
+    uses: winargos42-dotcom/Argos-1/.github/workflows/ci.yml@77624b9349c1567fcfa7d3eac5a971b12a9178b0
     with:
-      source_ref: 6fc1aa3e2a08b9d1b655fb7ed29a0bc532a4d480
+      source_ref: 77624b9349c1567fcfa7d3eac5a971b12a9178b0
     permissions:
       contents: read
