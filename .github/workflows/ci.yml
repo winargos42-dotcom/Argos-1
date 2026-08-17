@@ -36,9 +36,16 @@ jobs:
         run: |
           python -m py_compile             argos_deploy/cloud_entry.py             argos_deploy/src/core.py             argos_deploy/src/health_details.py             argos_deploy/src/mempalace_bridge.py
 
+      - name: Run project tests
+        run: pytest --cov=src --cov-fail-under=30 -q --tb=short
+
       - name: Run deployed-runtime tests
         working-directory: argos_deploy
-        run: pytest tests --cov=src --cov-fail-under=30 -q --tb=short
+        env:
+          PYTHONPATH: .
+        run: >-
+          python -m pytest --rootdir=. -c /dev/null tests
+          --cov=src --cov-fail-under=30 -q --tb=short
 
   build-apk:
     name: APK after tests
