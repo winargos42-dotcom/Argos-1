@@ -2,17 +2,22 @@ from __future__ import annotations
 
 import shutil
 import subprocess
+import threading
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import requests
 
+import src.core as core_module
 from src.core import ArgosCore
 
 
 def _dummy_core(ollama_url: str = "http://localhost:11434/api/generate"):
     dummy = SimpleNamespace(
         ollama_url=ollama_url,
+        _ollama_status="unknown",
+        _ollama_last_error=None,
+        _ollama_last_checked_at=None,
         _ollama_unavailable_until=0.0,
         _ollama_unavailable_permanent=False,
     )
@@ -38,7 +43,8 @@ def test_missing_ollama_binary_opens_permanent_circuit(monkeypatch):
         spawn_calls.append(args)
         raise AssertionError("missing executable must be detected before Popen")
 
-    monkeypatch.setattr(requests, "get", offline)
+    monkeypatch.setattr(ArgosCore, "_ollama_start_lock", threading.Lock())
+    monkeypatch.setattr(core_module.requests, "get", offline)
     monkeypatch.setattr(shutil, "which", lambda _name: None)
     monkeypatch.setattr(subprocess, "Popen", spawn)
 
@@ -55,8 +61,9 @@ def test_remote_ollama_is_never_started_as_a_local_process(monkeypatch):
     dummy = _dummy_core("http://inference.internal:11434/api/generate")
     spawn_calls: list[list[str]] = []
 
+    monkeypatch.setattr(ArgosCore, "_ollama_start_lock", threading.Lock())
     monkeypatch.setattr(
-        requests,
+        core_module.requests,
         "get",
         lambda *_args, **_kwargs: (_ for _ in ()).throw(
             requests.ConnectionError("remote offline")
@@ -155,6 +162,7 @@ def test_inference_health_never_returns_credentials(monkeypatch):
     monkeypatch.setenv("ARGOS_INFERENCE_MODEL", "argos-cloud")
     monkeypatch.setenv("ARGOS_INFERENCE_API_KEY", "top-secret")
 
+    no = lambda: False
     dummy = SimpleNamespace(
         ai_mode="auto",
         ollama_url="http://localhost:11434/api/generate",
