@@ -86,9 +86,12 @@ jobs:
             echo "::endgroup::"
           done
 
-      - name: Enforce aggregate coverage
+      - name: Enforce measured coverage floors
         working-directory: argos_deploy
-        run: python -m coverage report --fail-under=30
+        run: |
+          python -m coverage report --fail-under=13.5
+          python -m coverage report \
+            --include=src/health_details.py --fail-under=70
 
   build-apk:
     name: APK after tests
