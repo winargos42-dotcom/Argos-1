@@ -140,18 +140,15 @@ jobs:
           disable-animations: true
           script: |
             set -eu
-            APK="$(find artifacts -name '*.apk' -print -quit)"
-            test -n "$APK"
-            adb install -r "$APK"
-            adb shell monkey -p org.iliyaqdrwalqu.argos.argos_universal \
-              -c android.intent.category.LAUNCHER 1
+            test -n "$(find artifacts -name '*.apk' -print -quit)"
+            adb install -r "$(find artifacts -name '*.apk' -print -quit)"
+            adb shell monkey -p org.iliyaqdrwalqu.argos.argos_universal -c android.intent.category.LAUNCHER 1
             sleep 8
             adb shell pidof org.iliyaqdrwalqu.argos.argos_universal
             adb shell uiautomator dump /sdcard/argos-window.xml
             adb pull /sdcard/argos-window.xml android-smoke-window.xml
             adb logcat -d > android-smoke-logcat.txt
-            ! grep -E "FATAL EXCEPTION|Process: org\\.iliyaqdrwalqu\\.argos\\.argos_universal.*has died" \
-              android-smoke-logcat.txt
+            ! grep -E "FATAL EXCEPTION|Process: org\\.iliyaqdrwalqu\\.argos\\.argos_universal.*has died" android-smoke-logcat.txt
 
       - name: Upload Android smoke evidence
         if: always()
