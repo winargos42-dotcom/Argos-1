@@ -102,13 +102,9 @@ def collect_system() -> dict[str, Any]:
 
 def _railway_metadata() -> dict[str, str | None]:
     safe_names = {
-        "project_id": "RAILWAY_PROJECT_ID",
         "project_name": "RAILWAY_PROJECT_NAME",
-        "service_id": "RAILWAY_SERVICE_ID",
         "service_name": "RAILWAY_SERVICE_NAME",
-        "environment_id": "RAILWAY_ENVIRONMENT_ID",
         "environment_name": "RAILWAY_ENVIRONMENT_NAME",
-        "run_uid": "RAILWAY_RUN_UID",
         "public_domain": "RAILWAY_PUBLIC_DOMAIN",
     }
     return {label: os.getenv(env_name) for label, env_name in safe_names.items()}
@@ -146,7 +142,6 @@ def _docker_state() -> dict[str, Any]:
             services.append(
                 {
                     "name": item.get("Names"),
-                    "image": item.get("Image"),
                     "state": item.get("State"),
                     "status": item.get("Status"),
                 }
@@ -175,7 +170,7 @@ def collect_container() -> dict[str, Any]:
         exists = volume_path.exists()
         volume = {
             "available": exists,
-            "path": str(volume_path),
+            "configured": True,
             "writable": exists and os.access(volume_path, os.W_OK),
         }
 
