@@ -146,8 +146,8 @@ jobs:
             adb shell monkey -p org.iliyaqdrwalqu.argos.argos_universal -c android.intent.category.LAUNCHER 1
             sleep 8
             adb shell pidof org.iliyaqdrwalqu.argos.argos_universal
-            adb shell uiautomator dump /sdcard/argos-window.xml
-            adb pull /sdcard/argos-window.xml android-smoke-window.xml
+            adb shell dumpsys window windows > android-smoke-window.txt
+            grep -q "org.iliyaqdrwalqu.argos.argos_universal" android-smoke-window.txt
             adb logcat -d > android-smoke-logcat.txt
             ! grep -E "Process: org\\.iliyaqdrwalqu\\.argos\\.argos_universal|ANR in org\\.iliyaqdrwalqu\\.argos\\.argos_universal" android-smoke-logcat.txt
 
@@ -157,7 +157,7 @@ jobs:
         with:
           name: android-smoke-${{ github.run_number }}
           path: |
-            android-smoke-window.xml
+            android-smoke-window.txt
             android-smoke-logcat.txt
           if-no-files-found: warn
           retention-days: 30
