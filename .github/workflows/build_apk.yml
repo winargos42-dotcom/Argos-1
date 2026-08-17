@@ -1,32 +1,20 @@
 # .github/workflows/build_apk.yml
-# ПАТЧ: исправлены несуществующие версии actions
-#   checkout@v5       → checkout@v4
-#   setup-python@v6   → setup-python@v5
-#   cache@v5          → cache@v4
-#   upload-artifact@v7 → upload-artifact@v4
-
 name: 🏗️ Build ARGOS APK
 
 on:
-  push:
-    branches: [main]
-    paths:
-      - 'main_kivy.py'
-      - 'kivy_1gui.py'
-      - 'buildozer.spec'
-      - 'src/**'
-  pull_request:
-    branches: [main]
-    paths:
-      - 'main_kivy.py'
-      - 'kivy_1gui.py'
-      - 'buildozer.spec'
+  workflow_call:
+    inputs:
+      release_mode:
+        description: "Build mode"
+        required: false
+        default: debug
+        type: string
   workflow_dispatch:
     inputs:
       release_mode:
-        description: 'Режим сборки'
+        description: "Режим сборки"
         required: false
-        default: 'debug'
+        default: debug
         type: choice
         options:
           - debug
@@ -34,7 +22,7 @@ on:
 
 jobs:
   build-apk:
-    name: Build Android APK (${{ github.event.inputs.release_mode || 'debug' }})
+    name: Build Android APK (${{ inputs.release_mode || 'debug' }})
     runs-on: ubuntu-22.04
     permissions:
       contents: read
@@ -99,7 +87,7 @@ jobs:
         env:
           BUILDOZER_WARN_ON_ROOT: "0"
         run: |
-          MODE="${{ github.event.inputs.release_mode || 'debug' }}"
+          MODE="${{ inputs.release_mode || 'debug' }}"
           echo "▶ buildozer android $MODE"
           buildozer -v android $MODE
 
@@ -113,7 +101,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4  # было @v7 — не существует
         with:
-          name: argos-apk-${{ github.event.inputs.release_mode || 'debug' }}-${{ github.run_number }}
+          name: argos-apk-${{ inputs.release_mode || 'debug' }}-${{ github.run_number }}
           path: bin/*.apk
           if-no-files-found: warn
           retention-days: 30
