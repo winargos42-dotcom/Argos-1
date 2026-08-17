@@ -504,12 +504,13 @@ def print_summary(syntax_errors: int, dry_run: bool) -> bool:
 
 
 def main() -> int:
+    global VERSION
+
     parser = argparse.ArgumentParser(description="ARGOS Final Release Checker")
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--version", default=VERSION)
     args = parser.parse_args()
 
-    global VERSION
     VERSION = args.version
 
     print(f"\n{BOLD}{CYAN}{'═' * 60}{RESET}")
