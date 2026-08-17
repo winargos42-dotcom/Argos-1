@@ -4,7 +4,7 @@
 title = ARGOS Universal OS
 package.name = argos_universal
 package.domain = org.iliyaqdrwalqu.argos
-version = 2.1.3
+version = 2.1.4
 
 # Source
 source.dir = .

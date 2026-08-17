@@ -49,11 +49,7 @@ jobs:
       - name: Запустить тесты
         run: |
           pip install -q pytest
-          python -m pytest tests/test_industrial_protocols.py \
-                           tests/test_consciousness_module.py \
-                           tests/test_colibri_daemon.py \
-                           tests/test_organize_files.py \
-                           -v --tb=short
+          python -m pytest tests -v --tb=short
 
       - name: Запустить health_check
         run: python health_check.py || true
