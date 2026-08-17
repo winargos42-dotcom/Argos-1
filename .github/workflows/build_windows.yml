@@ -8,6 +8,10 @@ on:
         required: false
         default: onefile
         type: string
+      source_ref:
+        description: "Exact source revision to package"
+        required: false
+        type: string
   workflow_dispatch:
     inputs:
       one_file:
@@ -27,6 +31,8 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.source_ref || github.sha }}
 
       - name: Set up Python 3.10
         uses: actions/setup-python@v5
