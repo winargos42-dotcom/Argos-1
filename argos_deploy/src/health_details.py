@@ -295,12 +295,14 @@ class HealthDetailsCollector:
         core: Any,
     ) -> dict[str, Any]:
         now = time.time()
+        expected_error = "initialization_failed" if init_error else None
         with self._lock:
             if (
                 self._cached is not None
                 and now - self._cached_at < self.ttl_seconds
                 and self._cached.get("service", {}).get("ready") == bool(ready)
-                and self._cached.get("service", {}).get("error") == init_error
+                and self._cached.get("service", {}).get("error")
+                == expected_error
             ):
                 return self._cached
             self._cached = build_health_details(
