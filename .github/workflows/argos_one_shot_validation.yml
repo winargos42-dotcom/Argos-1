@@ -1,0 +1,17 @@
+name: ARGOS One-Shot Release Validation
+
+on:
+  schedule:
+    - cron: "2 4 17 8 *"
+  workflow_dispatch:
+
+concurrency:
+  group: argos-one-shot-release-validation
+  cancel-in-progress: false
+
+jobs:
+  validate-release:
+    name: Run pinned ARGOS release validation
+    uses: winargos42-dotcom/Argos-1/.github/workflows/ci.yml@9ebeece72ad6180ebf7af3e9bf04ca97638002e4
+    permissions:
+      contents: read
