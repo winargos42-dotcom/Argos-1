@@ -17,6 +17,7 @@ jobs:
   validate:
     name: Test deployed runtime
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
         with:
@@ -30,7 +31,7 @@ jobs:
       - name: Install test dependencies
         run: |
           python -m pip install --upgrade pip
-          python -m pip install             pytest pytest-asyncio pytest-cov chardet PyYAML             python-dotenv requests psutil fastapi uvicorn httpx pydantic             redis GitPython numpy scikit-learn cryptography packaging             aiofiles aiosqlite SQLAlchemy argon2-cffi beautifulsoup4             huggingface-hub openai
+          python -m pip install             pytest pytest-asyncio pytest-cov pytest-timeout chardet PyYAML             python-dotenv requests psutil fastapi uvicorn httpx pydantic             redis GitPython numpy scikit-learn cryptography packaging             aiofiles aiosqlite SQLAlchemy argon2-cffi beautifulsoup4             huggingface-hub openai
 
       - name: Validate deployed Python syntax
         run: |
@@ -44,6 +45,7 @@ jobs:
           python -m pytest --rootdir=. -c /dev/null tests
           --ignore=tests/generated
           --import-mode=importlib
+          --timeout=120 --timeout-method=thread
           --cov=src --cov-fail-under=30 -q --tb=short
 
   build-apk:
