@@ -25,15 +25,26 @@ def test_argos_core_has_version():
 
 
 def test_argos_core_process_logic_returns_dict(monkeypatch):
-    """Exercise basic logic without importing every optional integration."""
+    """Exercise the direct process path without booting optional integrations."""
 
     try:
         from src.core import _load_argos_core_class
 
         core_class = _load_argos_core_class()
-        monkeypatch.setattr(core_class, "_init_integrator", lambda self: None)
-        core = core_class()
-        result = core.process_logic("помощь", None, None)
+        core = object.__new__(core_class)
+        core._internal_admin = None
+        core.context = None
+        monkeypatch.setattr(
+            core_class,
+            "_apply_chatgpt_link_profile",
+            lambda self, _text: "ARGOS ready",
+        )
+        monkeypatch.setattr(
+            core_class,
+            "_remember_dialog_turn",
+            lambda self, *_args: None,
+        )
+        result = core_class.process_logic(core, "помощь", None, None)
         assert isinstance(result, dict)
         assert "answer" in result
     except ImportError as exc:
