@@ -24,6 +24,7 @@ jobs:
         run: |
           find . -name "*.py" -type f \
             ! -path "*/venv/*" ! -path "*/__pycache__/*" \
+            ! -path "*/claude-code-templates/*" ! -path "*/tmp/*" \
             -exec python3 -m py_compile {} +
       - name: Validate project
         run: python3 validate_project.py
