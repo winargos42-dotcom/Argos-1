@@ -1,33 +1,53 @@
 name: CI — Release Validation
+
 on:
   push:
     branches: [main, "release/*"]
   pull_request:
     branches: [main]
+  workflow_dispatch:
 
 jobs:
   validate:
+    name: Test deployed runtime
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
       - name: Set up Python 3.10
         uses: actions/setup-python@v5
         with:
-          python-version: '3.10'
-      - name: Install dependencies
+          python-version: "3.10"
+
+      - name: Install test dependencies
         run: |
-          pip install chardet pytest-cov
-          pip install -r requirements.txt --quiet || true
-      - name: Fix encoding
-        run: python3 fix_encoding.py
-      - name: Validate Python syntax
+          python -m pip install --upgrade pip
+          python -m pip install             pytest pytest-cov chardet PyYAML             python-dotenv requests psutil fastapi uvicorn httpx pydantic             redis GitPython numpy scikit-learn cryptography packaging             aiofiles SQLAlchemy argon2-cffi
+
+      - name: Validate deployed Python syntax
         run: |
-          find . -name "*.py" -type f \
-            ! -path "*/venv/*" \
-            ! -path "*/__pycache__/*" \
-            ! -path "*/node_modules/*" \
-            -exec python3 -m py_compile {} +
-      - name: Validate project
-        run: python3 validate_project.py || true
-      - name: Run tests
-        run: pytest --cov=src --cov-fail-under=30 -q --tb=short
+          python -m py_compile             argos_deploy/cloud_entry.py             argos_deploy/src/core.py             argos_deploy/src/health_details.py             argos_deploy/src/mempalace_bridge.py
+
+      - name: Run deployed-runtime tests
+        working-directory: argos_deploy
+        run: pytest tests --cov=src --cov-fail-under=30 -q --tb=short
+
+  build-apk:
+    name: APK after tests
+    needs: validate
+    if: github.event_name != 'pull_request'
+    uses: ./.github/workflows/build_apk.yml
+    with:
+      release_mode: debug
+    permissions:
+      contents: read
+
+  build-windows:
+    name: Windows installer after APK
+    needs: build-apk
+    if: github.event_name != 'pull_request'
+    uses: ./.github/workflows/build_windows.yml
+    with:
+      one_file: onefile
+    permissions:
+      contents: read
