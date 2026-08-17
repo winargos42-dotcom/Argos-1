@@ -1,0 +1,341 @@
+"""Bounded, secret-free runtime telemetry for the cloud health endpoint."""
+
+from __future__ import annotations
+
+import json
+import os
+import shutil
+import subprocess
+import threading
+import time
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any
+
+
+def _unavailable(reason: str) -> dict[str, Any]:
+    return {"available": False, "reason": reason}
+
+
+def collect_nodes(core: Any) -> dict[str, Any]:
+    if core is None:
+        return _unavailable("core_unavailable")
+    bridge = getattr(core, "p2p", None)
+    if bridge is None:
+        return _unavailable("p2p_unavailable")
+
+    try:
+        registry = getattr(bridge, "registry", None)
+        peers = list(registry.all()) if registry and hasattr(registry, "all") else []
+        local_profile = getattr(bridge, "profile", None)
+        local = (
+            local_profile.to_dict()
+            if local_profile is not None and hasattr(local_profile, "to_dict")
+            else {}
+        )
+
+        safe_peers = []
+        for peer in peers:
+            if not isinstance(peer, dict):
+                continue
+            power = peer.get("power")
+            safe_peers.append(
+                {
+                    "role": peer.get("role"),
+                    "last_seen": peer.get("last_seen"),
+                    "age_days": peer.get("age_days"),
+                    "power": (
+                        power.get("index")
+                        if isinstance(power, dict)
+                        else None
+                    ),
+                }
+            )
+
+        return {
+            "available": True,
+            "online": len(safe_peers) + 1,
+            "peers_online": len(safe_peers),
+            "local": {
+                "role": local.get("role"),
+                "age_days": local.get("age_days"),
+                "power": (
+                    local.get("power", {}).get("index")
+                    if isinstance(local.get("power"), dict)
+                    else None
+                ),
+            },
+            "peers": safe_peers,
+        }
+    except Exception as exc:
+        return _unavailable(f"p2p_error:{type(exc).__name__}")
+
+
+def collect_mempalace() -> dict[str, Any]:
+    try:
+        from src import mempalace_bridge
+
+        details = mempalace_bridge.get_health_details()
+        if isinstance(details, dict):
+            return details
+        return _unavailable("invalid_mempalace_status")
+    except Exception as exc:
+        return _unavailable(f"mempalace_error:{type(exc).__name__}")
+
+
+def collect_system() -> dict[str, Any]:
+    try:
+        from src.connectivity import system_health
+
+        return {
+            "available": True,
+            "cpu": system_health.get_cpu(),
+            "ram": system_health.get_ram(),
+            "disks": system_health.get_disks(),
+            "gpus": system_health.get_gpu(),
+        }
+    except Exception as exc:
+        return _unavailable(f"system_error:{type(exc).__name__}")
+
+
+def _railway_metadata() -> dict[str, bool]:
+    """Expose runtime presence without stable internal identifiers or names."""
+    return {
+        "managed": bool(
+            os.getenv("RAILWAY_ENVIRONMENT_ID")
+            or os.getenv("RAILWAY_SERVICE_ID")
+        )
+    }
+
+
+def _docker_state() -> dict[str, Any]:
+    socket_path = Path("/var/run/docker.sock")
+    docker_cmd = shutil.which("docker")
+    if not socket_path.exists():
+        return _unavailable("socket_unavailable")
+    if not docker_cmd:
+        return _unavailable("cli_unavailable")
+
+    try:
+        result = subprocess.run(
+            [
+                docker_cmd,
+                "ps",
+                "--format",
+                "{{json .}}",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=3,
+            check=False,
+        )
+        if result.returncode != 0:
+            return _unavailable(f"docker_ps_exit_{result.returncode}")
+
+        states: dict[str, int] = {}
+        total = 0
+        for line in result.stdout.splitlines():
+            if not line.strip():
+                continue
+            item = json.loads(line)
+            state = str(item.get("State") or "unknown").lower()
+            states[state] = states.get(state, 0) + 1
+            total += 1
+        return {
+            "available": True,
+            "total": total,
+            "running": states.get("running", 0),
+            "states": states,
+        }
+    except Exception as exc:
+        return _unavailable(f"docker_error:{type(exc).__name__}")
+
+
+def collect_container() -> dict[str, Any]:
+    volume_value = (
+        os.getenv("RAILWAY_VOLUME_MOUNT_PATH")
+        or os.getenv("ARGOS_STATE_ROOT")
+        or ""
+    )
+    volume_path = Path(volume_value) if volume_value else None
+    if volume_path is None:
+        volume = _unavailable("volume_not_configured")
+    else:
+        exists = volume_path.exists()
+        volume = {
+            "available": exists,
+            "configured": True,
+            "writable": exists and os.access(volume_path, os.W_OK),
+        }
+
+    containerized = Path("/.dockerenv").exists()
+    if not containerized:
+        try:
+            containerized = "docker" in Path("/proc/1/cgroup").read_text(
+                encoding="utf-8", errors="ignore"
+            ).lower()
+        except Exception:
+            containerized = False
+
+    return {
+        "available": True,
+        "containerized": containerized,
+        "railway": _railway_metadata(),
+        "volume": volume,
+        "docker": _docker_state(),
+    }
+
+
+def _collect_inference(core: Any) -> dict[str, Any]:
+    if core is None:
+        return _unavailable("core_unavailable")
+    getter = getattr(core, "inference_health", None)
+    if not callable(getter):
+        return _unavailable("inference_health_unavailable")
+    try:
+        details = getter()
+        if not isinstance(details, dict):
+            return _unavailable("invalid_inference_status")
+        providers = details.get("providers", {})
+        safe_provider_fields = {
+            "configured",
+            "available",
+            "status",
+            "last_success_at",
+            "last_checked_at",
+            "last_error",
+            "next_probe_at",
+            "permanent",
+        }
+        safe_providers = {
+            str(name): {
+                key: value
+                for key, value in item.items()
+                if key in safe_provider_fields
+            }
+            for name, item in providers.items()
+            if isinstance(item, dict)
+        }
+        return {
+            "available": details.get("available")
+            if "available" in details
+            else any(
+                item.get("available") is True
+                for item in safe_providers.values()
+            ),
+            "mode": details.get("mode"),
+            "selected": details.get("selected"),
+            "providers": safe_providers,
+        }
+    except Exception as exc:
+        return _unavailable(f"inference_error:{type(exc).__name__}")
+
+
+def build_health_details(
+    *,
+    ready: bool,
+    init_error: str | None,
+    boot_time: float,
+    core: Any,
+    now: float | None = None,
+) -> dict[str, Any]:
+    now = time.time() if now is None else now
+    nodes = collect_nodes(core)
+    mempalace = collect_mempalace()
+    system = collect_system()
+    inference = _collect_inference(core)
+    container = collect_container()
+
+    if init_error or not ready:
+        status = "unhealthy"
+    elif any(
+        item.get("available") is False
+        for item in (nodes, mempalace, system, inference, container)
+    ):
+        status = "degraded"
+    elif (
+        isinstance(container.get("docker"), dict)
+        and container["docker"].get("available") is False
+    ):
+        status = "degraded"
+    else:
+        status = "healthy"
+
+    return {
+        "status": status,
+        "timestamp": datetime.fromtimestamp(now, timezone.utc).isoformat(),
+        "service": {
+            "ready": bool(ready),
+            "uptime_seconds": max(0, int(now - boot_time)),
+            "error": "initialization_failed" if init_error else None,
+        },
+        "nodes": nodes,
+        "mempalace": mempalace,
+        "system": system,
+        "inference": inference,
+        "container": container,
+    }
+
+
+class HealthDetailsCollector:
+    """Small TTL cache so GPU and psutil probes do not block every request."""
+
+    def __init__(self, ttl_seconds: float = 15.0):
+        self.ttl_seconds = max(1.0, ttl_seconds)
+        self._lock = threading.Lock()
+        self._cached_at = 0.0
+        self._cached: dict[str, Any] | None = None
+
+    def get(
+        self,
+        *,
+        ready: bool,
+        init_error: str | None,
+        boot_time: float,
+        core: Any,
+    ) -> dict[str, Any]:
+        now = time.time()
+        expected_error = "initialization_failed" if init_error else None
+        with self._lock:
+            if (
+                self._cached is not None
+                and now - self._cached_at < self.ttl_seconds
+                and self._cached.get("service", {}).get("ready") == bool(ready)
+                and self._cached.get("service", {}).get("error")
+                == expected_error
+            ):
+                return self._cached
+            self._cached = build_health_details(
+                ready=ready,
+                init_error=init_error,
+                boot_time=boot_time,
+                core=core,
+                now=now,
+            )
+            self._cached_at = now
+            return self._cached
+
+
+def _configured_ttl() -> float:
+    try:
+        return float(os.getenv("ARGOS_HEALTH_DETAILS_TTL", "15") or "15")
+    except ValueError:
+        return 15.0
+
+
+_DEFAULT_COLLECTOR = HealthDetailsCollector(ttl_seconds=_configured_ttl())
+
+
+def get_cached_health_details(
+    *,
+    ready: bool,
+    init_error: str | None,
+    boot_time: float,
+    core: Any,
+) -> dict[str, Any]:
+    return _DEFAULT_COLLECTOR.get(
+        ready=ready,
+        init_error=init_error,
+        boot_time=boot_time,
+        core=core,
+    )

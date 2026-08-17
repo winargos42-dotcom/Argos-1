@@ -1,36 +1,23 @@
 name: 🖥️ Build ARGOS Windows setup.exe
 
 on:
-  push:
-    branches: [main]
-    paths:
-      - 'main.py'
-      - 'requirements.txt'
-      - 'argos.spec'
-      - 'installer/argos_setup.iss'
-  pull_request:
-    branches: [main]
-    paths:
-      - 'main.py'
-      - 'requirements.txt'
-      - 'argos.spec'
-      - 'installer/argos_setup.iss'
+  workflow_call:
+    inputs:
+      one_file:
+        description: "PyInstaller mode"
+        required: false
+        default: onefile
+        type: string
   workflow_dispatch:
     inputs:
       one_file:
-        description: 'PyInstaller режим'
+        description: "PyInstaller режим"
         required: false
-        default: 'onefile'
+        default: onefile
         type: choice
         options:
           - onefile
           - onedir
-
-permissions:
-  contents: read
-
-env:
-  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
 
 jobs:
   build-windows:
