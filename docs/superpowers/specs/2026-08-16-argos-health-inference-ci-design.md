@@ -46,16 +46,17 @@ than inferred:
 
 - service readiness, UTC timestamp and uptime;
 - P2P registry nodes (local plus live registry peers);
-- MemPalace availability, drawer count, wings, path and storage bytes;
+- MemPalace availability and constant-time drawer count;
 - CPU, RAM, disks and GPU/VRAM/utilization from system-health collectors;
 - inference provider configuration/circuit status, selected mode, last error,
   last check and next probe;
-- container identity, Railway metadata, persistent-volume writability, and
-  Docker daemon/service state only when a Docker socket/CLI is actually
-  available.
+- container identity, Railway-presence flag, persistent-volume writability,
+  and aggregate Docker state only when a Docker socket/CLI is available.
 
-No tokens, credentials, environment values, prompts, peer secrets, or Docker
-mutation operations are exposed.
+No tokens, credentials, environment values, prompts, peer secrets, stable
+internal identifiers, hostnames, filesystem paths, raw initialization errors,
+exact custom endpoint URLs, Docker names/images, or mutation operations are
+exposed.
 
 ### CI
 
