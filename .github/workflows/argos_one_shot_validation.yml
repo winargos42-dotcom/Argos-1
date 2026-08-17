@@ -1,13 +1,7 @@
-name: ARGOS One-Shot Release Validation
+name: ARGOS Release Validation Trigger
 
 on:
-  schedule:
-    - cron: "17 4 17 8 *"
   workflow_dispatch:
-
-concurrency:
-  group: argos-one-shot-release-validation
-  cancel-in-progress: false
 
 jobs:
   validate-release:
