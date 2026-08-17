@@ -199,7 +199,7 @@ class ProjectValidator:
                     for line in changes.split('\n')[:5]:
                         print(f"   {line}")
                     if len(changes.split('\n')) > 5:
-                        print(f"   ... и еще {len(changes.split('\n')) - 5} файлов")
+                        print(f"   ... и еще {len(changes.splitlines()) - 5} файлов")
                 else:
                     print("✅ Нет незакоммиченных изменений")
                 
