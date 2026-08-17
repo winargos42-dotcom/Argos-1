@@ -37,9 +37,10 @@ def _patch_argoscore_blocking(request, monkeypatch):
     """
     # Тесты в test_ollama_timeout_autostart.py проверяют реальное поведение Ollama —
     # не блокируем для них Ollama/localhost.
-    _is_ollama_test = (
-        request.fspath.basename == "test_ollama_timeout_autostart.py"
-    )
+    _is_ollama_test = request.fspath.basename in {
+        "test_ollama_timeout_autostart.py",
+        "test_inference_resilience.py",
+    }
     _noop = lambda *a, **kw: None
     _false = lambda *a, **kw: False
     _empty = lambda *a, **kw: {}

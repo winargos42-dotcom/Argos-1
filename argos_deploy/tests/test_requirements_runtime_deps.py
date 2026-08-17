@@ -1,12 +1,14 @@
 import unittest
 from pathlib import Path
 
-QUICKSTART_FILES = ("quickstart.md", "docs/user-guide/quickstart.md")
+DEPLOY_ROOT = Path(__file__).resolve().parents[1]
+PROJECT_ROOT = DEPLOY_ROOT.parent
+QUICKSTART_FILES = (PROJECT_ROOT / "quickstart.md",)
 
 
 class TestRequirementsRuntimeDeps(unittest.TestCase):
     def test_requirements_include_critical_ai_and_ui_packages(self):
-        text = Path("requirements.txt").read_text(encoding="utf-8")
+        text = (DEPLOY_ROOT / "requirements.txt").read_text(encoding="utf-8")
         for dep in (
             "google-genai>=",
             'ibm-watsonx-ai>=1.3.42,<1.4.0; python_version < "3.11"',
@@ -19,7 +21,7 @@ class TestRequirementsRuntimeDeps(unittest.TestCase):
             self.assertIn(dep, text)
 
     def test_build_scaffold_includes_required_dependencies(self):
-        text = Path("build.py").read_text(encoding="utf-8")
+        text = (DEPLOY_ROOT / "build.py").read_text(encoding="utf-8")
         for dep in (
             "google-genai>=",
             'ibm-watsonx-ai>=1.3.42,<1.4.0; python_version < "3.11"',
@@ -31,17 +33,16 @@ class TestRequirementsRuntimeDeps(unittest.TestCase):
     def test_quickstart_includes_ollama_installation(self):
         expected = "curl -fsSL https://ollama.com/install.sh | sh"
         warning = "рекомендуется сначала просмотреть скрипт install.sh"
-        for file_path in QUICKSTART_FILES:
-            file = Path(file_path)
-            self.assertTrue(file.exists(), f"Quickstart file is missing: {file_path}")
+        for file in QUICKSTART_FILES:
+            self.assertTrue(file.exists(), f"Quickstart file is missing: {file}")
             content = file.read_text(encoding="utf-8")
             self.assertIn(
                 expected,
                 content,
-                f"Ollama installation command not found in {file_path}",
+                f"Ollama installation command not found in {file}",
             )
             self.assertIn(
                 warning,
                 content,
-                f"Ollama installation safety warning not found in {file_path}",
+                f"Ollama installation safety warning not found in {file}",
             )

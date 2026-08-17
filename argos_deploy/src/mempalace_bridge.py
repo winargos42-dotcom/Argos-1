@@ -39,21 +39,47 @@ _COLLECTION = "argos_palace"
 
 # ── Lazy imports ────────────────────────────────────────────────────────────
 _mp_ok = False
+_mp_last_init_attempt_at = 0.0
+_mp_error: str | None = None
 _chromadb_client = None
 _collection = None
 _init_lock = threading.Lock()
 
 
 def _ensure_init() -> bool:
-    """Инициализация ChromaDB (lazy, thread-safe)."""
-    global _mp_ok, _chromadb_client, _collection
+    """Initialize ChromaDB lazily with a bounded retry cooldown."""
+    global _mp_ok, _mp_last_init_attempt_at, _mp_error
+    global _chromadb_client, _collection
     if _mp_ok:
         return True
     if not _MEMPALACE_ENABLED:
+        _mp_error = "disabled"
         return False
+
+    try:
+        retry_seconds = int(
+            os.getenv("ARGOS_MEMPALACE_RETRY_SECONDS", "300")
+        )
+    except ValueError:
+        retry_seconds = 300
+    retry_seconds = max(30, min(retry_seconds, 3600))
+    now = time.time()
+    if (
+        _mp_last_init_attempt_at
+        and now - _mp_last_init_attempt_at < retry_seconds
+    ):
+        return False
+
     with _init_lock:
         if _mp_ok:
             return True
+        now = time.time()
+        if (
+            _mp_last_init_attempt_at
+            and now - _mp_last_init_attempt_at < retry_seconds
+        ):
+            return False
+        _mp_last_init_attempt_at = now
         try:
             import chromadb
 
@@ -64,11 +90,18 @@ def _ensure_init() -> bool:
                 metadata={"hnsw:space": "cosine"},
             )
             _mp_ok = True
-            log.info("[MemPalace] Инициализирован: %s (%d drawers)", _PALACE_PATH, _collection.count())
+            _mp_error = None
+            log.info(
+                "[MemPalace] initialized: %s (%d drawers)",
+                _PALACE_PATH,
+                _collection.count(),
+            )
         except ImportError:
-            log.warning("[MemPalace] chromadb не установлен — pip install mempalace")
+            _mp_error = "chromadb_unavailable"
+            log.warning("[MemPalace] chromadb is not installed")
         except Exception as exc:
-            log.warning("[MemPalace] Ошибка инициализации: %s", exc)
+            _mp_error = f"init_error:{type(exc).__name__}"
+            log.warning("[MemPalace] initialization error: %s", exc)
     return _mp_ok
 
 
@@ -290,6 +323,31 @@ def get_memory_context(query: str = "", wing: str = "") -> str:
             parts.append("\n".join(lines))
 
     return "\n\n".join(parts)
+
+
+def get_health_details() -> dict:
+    """Cheap, secret-free MemPalace telemetry for /health/details."""
+    if not _ensure_init():
+        return {
+            "available": False,
+            "reason": _mp_error or "unavailable",
+            "enabled": _MEMPALACE_ENABLED,
+            "drawers": None,
+        }
+
+    try:
+        return {
+            "available": True,
+            "enabled": True,
+            "drawers": int(_collection.count()),
+        }
+    except Exception as exc:
+        return {
+            "available": False,
+            "reason": f"status_error:{type(exc).__name__}",
+            "enabled": True,
+            "drawers": None,
+        }
 
 
 def status() -> str:

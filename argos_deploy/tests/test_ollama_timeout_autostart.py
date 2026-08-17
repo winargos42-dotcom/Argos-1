@@ -27,6 +27,8 @@ def _make_dummy_core(ollama_url: str = "http://localhost:11434/api/generate"):
     )
     # Привязываем реальные методы из ArgosCore
     from src.core import ArgosCore
+    dummy._set_ollama_unavailable = ArgosCore._set_ollama_unavailable.__get__(dummy, type(dummy))
+    dummy._set_ollama_available = ArgosCore._set_ollama_available.__get__(dummy, type(dummy))
     dummy._ensure_ollama_running = ArgosCore._ensure_ollama_running.__get__(dummy, type(dummy))
     dummy._ensure_ollama_model = ArgosCore._ensure_ollama_model.__get__(dummy, type(dummy))
     dummy._ask_ollama = ArgosCore._ask_ollama.__get__(dummy, type(dummy))
@@ -186,6 +188,8 @@ def test_ensure_ollama_running_starts_process_when_down(monkeypatch):
     fake_proc.pid = 9999
 
     monkeypatch.setattr(sp, "Popen", lambda *a, **kw: fake_proc)
+    import shutil
+    monkeypatch.setattr(shutil, "which", lambda _name: "/usr/bin/ollama")
 
     # Сбрасываем класс-переменную между тестами
     ArgosCore._ollama_proc = None

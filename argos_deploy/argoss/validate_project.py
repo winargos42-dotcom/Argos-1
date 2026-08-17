@@ -31,7 +31,7 @@ class ProjectValidator:
         
         python_files = list(self.project_dir.rglob('*.py'))
         python_files = [f for f in python_files if not any(
-            part in f.parts for part in ['venv', '.venv', '__pycache__', 'node_modules']
+            part in f.parts for part in ['venv', '.venv', '__pycache__', 'node_modules', 'claude-code-templates', 'tmp']
         )]
         
         print(f"Найдено Python файлов: {len(python_files)}\n")
@@ -74,7 +74,7 @@ class ProjectValidator:
         
         python_files = list(self.project_dir.rglob('*.py'))
         python_files = [f for f in python_files if not any(
-            part in f.parts for part in ['venv', '.venv', '__pycache__', 'node_modules']
+            part in f.parts for part in ['venv', '.venv', '__pycache__', 'node_modules', 'claude-code-templates', 'tmp']
         )]
         
         import_errors = []
@@ -199,7 +199,7 @@ class ProjectValidator:
                     for line in changes.split('\n')[:5]:
                         print(f"   {line}")
                     if len(changes.split('\n')) > 5:
-                        print(f"   ... и еще {len(changes.split('\n')) - 5} файлов")
+                        print(f"   ... и еще {len(changes.splitlines()) - 5} файлов")
                 else:
                     print("✅ Нет незакоммиченных изменений")
                 

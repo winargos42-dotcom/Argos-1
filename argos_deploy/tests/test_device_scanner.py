@@ -19,7 +19,25 @@ from src.device_scanner import (
 
 # ── DeviceScanner ──────────────────────────────────────────────────────────
 
+@pytest.fixture(scope="module")
+def scanned_device_info():
+    """Scan the CI host once; repeated hardware discovery dominates this suite."""
+    return DeviceScanner().scan()
+
 class TestDeviceScanner:
+    @pytest.fixture(autouse=True)
+    def _reuse_device_scan(self, request, monkeypatch, scanned_device_info):
+        if request.node.name in {
+            "test_high_ram_gives_full_or_server_profile",
+            "test_low_ram_gives_lite_or_micro_profile",
+        }:
+            return
+        monkeypatch.setattr(
+            DeviceScanner,
+            "scan",
+            lambda self: scanned_device_info,
+        )
+
     def test_scan_returns_required_keys(self):
         s = DeviceScanner()
         info = s.scan()
@@ -134,6 +152,25 @@ class TestDeviceScanner:
 # ── AdaptiveImageBuilder ───────────────────────────────────────────────────
 
 class TestAdaptiveImageBuilder:
+    @pytest.fixture(autouse=True)
+    def _minimal_source_tree(
+        self, tmp_path, monkeypatch, scanned_device_info
+    ):
+        """Build test archives from a tiny source tree, not the whole checkout."""
+        monkeypatch.setattr(
+            DeviceScanner,
+            "scan",
+            lambda self: scanned_device_info,
+        )
+        source_dir = tmp_path / "source"
+        source_dir.mkdir()
+        (source_dir / "main.py").write_text("print('argos')\n", encoding="utf-8")
+        (source_dir / "requirements.txt").write_text(
+            "requests\npython-dotenv\npsutil\n",
+            encoding="utf-8",
+        )
+        monkeypatch.chdir(source_dir)
+
     def test_build_for_this_device_creates_zip(self, tmp_path):
         builder = AdaptiveImageBuilder(output_dir=str(tmp_path))
         result  = builder.build_for_this_device(version="0.0.1")

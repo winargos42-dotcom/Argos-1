@@ -19,6 +19,7 @@ from fastapi.middleware.cors import CORSMiddleware
 _boot_time = time.time()
 _ready = False
 _init_error = None
+_core = None
 
 
 def _report_codex_status() -> None:
@@ -52,13 +53,25 @@ def health():
     }
 
 
+@app.get("/health/details")
+def health_details_endpoint():
+    from src.health_details import get_cached_health_details
+
+    return get_cached_health_details(
+        ready=_ready,
+        init_error=_init_error,
+        boot_time=_boot_time,
+        core=_core,
+    )
+
+
 @app.get("/")
 def root():
     return {"service": "argos-core", "ready": _ready}
 
 
 def _init_orchestrator():
-    global _ready, _init_error
+    global _ready, _init_error, _core
 
     try:
         print("[CLOUD] Loading .env ...", flush=True)
@@ -82,6 +95,7 @@ def _init_orchestrator():
         orchestrator = ArgosOrchestrator()
         core  = getattr(orchestrator, "core",  None)
         admin = getattr(orchestrator, "admin", None)
+        _core = core
 
         # Install the fail-closed communication policy before any generic MCP
         # command surface can dispatch text into ARGOS core.

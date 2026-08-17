@@ -37,7 +37,9 @@ android.permissions = INTERNET,BLUETOOTH_ADMIN,NFC,READ_EXTERNAL_STORAGE,WRITE_E
 android.api = 33
 android.minapi = 24
 android.ndk = 25b
-android.archs = arm64-v8a
+# Keep the production ARM target and include x86_64 so the exact CI artifact
+# can also be boot-validated in the Android emulator after packaging.
+android.archs = arm64-v8a, x86_64
 
 # [FIX-SAI-FILEPROVIDER]
 # FileProvider is injected into AndroidManifest.xml by the p4a_hook.py
