@@ -51,3 +51,52 @@ jobs:
       one_file: onefile
     permissions:
       contents: read
+
+  android-smoke:
+    name: Install and launch APK on Android
+    needs: build-windows
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - name: Download APK from this run
+        uses: actions/download-artifact@v4
+        with:
+          pattern: argos-apk-debug-*
+          path: artifacts
+          merge-multiple: true
+
+      - name: Boot emulator, install, and launch APK
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 33
+          arch: x86_64
+          profile: pixel_6
+          disable-animations: true
+          script: |
+            set -euo pipefail
+            APK="$(find artifacts -name '*.apk' -print -quit)"
+            test -n "$APK"
+            adb install -r "$APK"
+            adb shell monkey -p org.iliyaqdrwalqu.argos.argos_universal \
+              -c android.intent.category.LAUNCHER 1
+            sleep 8
+            adb shell pidof org.iliyaqdrwalqu.argos.argos_universal
+            adb shell uiautomator dump /sdcard/argos-window.xml
+            adb pull /sdcard/argos-window.xml android-smoke-window.xml
+            adb logcat -d > android-smoke-logcat.txt
+            ! grep -E "FATAL EXCEPTION|Process: org\\.iliyaqdrwalqu\\.argos\\.argos_universal.*has died" \
+              android-smoke-logcat.txt
+
+      - name: Upload Android smoke evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-smoke-${{ github.run_number }}
+          path: |
+            android-smoke-window.xml
+            android-smoke-logcat.txt
+          if-no-files-found: warn
+          retention-days: 30
