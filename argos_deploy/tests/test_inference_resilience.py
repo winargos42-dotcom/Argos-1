@@ -2,14 +2,17 @@ from __future__ import annotations
 
 import shutil
 import subprocess
+import sys
 import threading
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import requests
 
-import src.core as core_module
-from src.core import ArgosCore
+from src.core import _load_argos_core_class
+
+ArgosCore = _load_argos_core_class()
+core_module = sys.modules[ArgosCore.__module__]
 
 
 def _dummy_core(ollama_url: str = "http://localhost:11434/api/generate"):
