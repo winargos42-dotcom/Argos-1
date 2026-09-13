@@ -1,12 +1,23 @@
 name: 📊 ARGOS Status Report
 
-# Генерирует полный отчёт о рабочем состоянии системы ARGOS.
+# Генерирует отчёт о файлах и среде checkout ARGOS.
 # Запускается:
 #   - вручную через UI GitHub (workflow_dispatch)
 #   - по расписанию: каждый день в 9:00 UTC
 #   - после успешной APK-сборки
 
 on:
+  push:
+    branches: [main, 'codex/repair-status-report-ci']
+    paths:
+      - 'status_report.py'
+      - 'tests/test_status_report.py'
+      - '.github/workflows/status_report.yml'
+  pull_request:
+    paths:
+      - 'status_report.py'
+      - 'tests/test_status_report.py'
+      - '.github/workflows/status_report.yml'
   workflow_dispatch:
     inputs:
       format:
@@ -36,7 +47,9 @@ env:
 jobs:
   report:
     name: Generate Status Report
+    if: github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-latest
+    timeout-minutes: 10
 
     steps:
       - name: Checkout repository
@@ -51,48 +64,57 @@ jobs:
         run: |
           pip install --quiet --upgrade pip
           # Устанавливаем только то, что нужно для отчёта
-          pip install --quiet pyyaml
+          pip install --quiet pyyaml pytest
 
-      - name: Install project dependencies (best-effort)
-        run: |
-          pip install --quiet -r requirements.txt || true
+      - name: Test status report
+        id: report_tests
+        continue-on-error: true
+        run: python -m pytest tests/test_status_report.py -q -o addopts=''
 
       - name: Determine report format
         id: fmt
+        env:
+          REQUESTED_FORMAT: ${{ github.event.inputs.format }}
         run: |
-          FMT="${{ github.event.inputs.format }}"
+          FMT="$REQUESTED_FORMAT"
           if [ -z "$FMT" ]; then
             FMT="markdown"
           fi
-          echo "format=$FMT" >> $GITHUB_OUTPUT
+          echo "format=$FMT" >> "$GITHUB_OUTPUT"
           echo "Формат отчёта: $FMT"
 
       - name: Run status report (console preview)
+        id: console_report
+        continue-on-error: true
         run: python status_report.py
 
       - name: Run status report (Markdown)
-        if: steps.fmt.outputs.format == 'markdown' || steps.fmt.outputs.format == ''
+        id: markdown_report
+        continue-on-error: true
+        if: steps.fmt.outputs.format != 'json'
         run: python status_report.py --md --out status_report.md
 
       - name: Run status report (JSON)
+        id: json_report
+        continue-on-error: true
         if: steps.fmt.outputs.format == 'json'
         run: python status_report.py --json --out status_report.json
 
       - name: Publish Markdown to GitHub Actions Summary
-        if: steps.fmt.outputs.format != 'json'
+        if: always() && !cancelled() && steps.fmt.outputs.format != 'json'
         run: |
           if [ -f status_report.md ]; then
-            cat status_report.md >> $GITHUB_STEP_SUMMARY
+            cat status_report.md >> "$GITHUB_STEP_SUMMARY"
           else
-            python status_report.py --md >> $GITHUB_STEP_SUMMARY
+            python status_report.py --md --out status_report.md >> "$GITHUB_STEP_SUMMARY"
           fi
 
       - name: Publish JSON to GitHub Actions Summary
-        if: steps.fmt.outputs.format == 'json'
+        if: always() && !cancelled() && steps.fmt.outputs.format == 'json'
         run: |
-          echo '```json' >> $GITHUB_STEP_SUMMARY
-          cat status_report.json >> $GITHUB_STEP_SUMMARY
-          echo '```' >> $GITHUB_STEP_SUMMARY
+          echo '```json' >> "$GITHUB_STEP_SUMMARY"
+          cat status_report.json >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload Markdown report as artifact
         if: always() && steps.fmt.outputs.format != 'json'
@@ -113,7 +135,22 @@ jobs:
           retention-days: 30
 
       - name: Fail if critical errors found
+        if: always() && !cancelled()
+        env:
+          TEST_OUTCOME: ${{ steps.report_tests.outcome }}
+          REPORT_FORMAT: ${{ steps.fmt.outputs.format }}
+          CONSOLE_OUTCOME: ${{ steps.console_report.outcome }}
+          MARKDOWN_OUTCOME: ${{ steps.markdown_report.outcome }}
+          JSON_OUTCOME: ${{ steps.json_report.outcome }}
         run: |
-          # Перезапускаем скрипт чтобы получить код возврата
-          python status_report.py
-        # Статус шага отражает общий результат проверки
+          if [ "$REPORT_FORMAT" = "json" ]; then
+            REPORT_OUTCOME="$JSON_OUTCOME"
+          else
+            REPORT_OUTCOME="$MARKDOWN_OUTCOME"
+          fi
+          if [ "$TEST_OUTCOME" != "success" ] || \
+             [ "$CONSOLE_OUTCOME" != "success" ] || \
+             [ "$REPORT_OUTCOME" != "success" ]; then
+            echo "::error::Status report tests failed, critical errors were found, or the report could not be generated. See the report and preceding steps."
+            exit 1
+          fi
