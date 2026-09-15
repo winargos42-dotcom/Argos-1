@@ -1,137 +1,24 @@
-name: Fix Encoding and Validate
+name: Python source validation
 
 on:
   push:
-    branches: [ main, develop, release/* ]
+    branches: [main, develop, 'release/*', 'codex/repair-status-report-ci']
   pull_request:
-    branches: [ main ]
+    branches: [main]
+
+permissions:
+  contents: read
 
 jobs:
   fix-and-validate:
     runs-on: ubuntu-latest
-    permissions:
-      contents: write
-    
+    timeout-minutes: 10
     steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
-    
-    - name: Set up Python
-      uses: actions/setup-python@v5
-      with:
-        python-version: '3.10'
-    
-    - name: Install dependencies
-      run: |
-        python -m pip install --upgrade pip
-        pip install chardet
-    
-    - name: Quick fix for legacy/__init__.py
-      run: |
-        echo '#!/usr/bin/env python3' > fix.py
-        echo 'from pathlib import Path' >> fix.py
-        echo 'target = Path("./src/interface/legacy/__init__.py")' >> fix.py
-        echo 'target.parent.mkdir(parents=True, exist_ok=True)' >> fix.py
-        echo 'target.write_text("""\"\"\"Legacy GUI files — kept for reference only.\"\"\"\n""", encoding="utf-8")' >> fix.py
-        echo 'print(f"✅ Fixed: {target}")' >> fix.py
-        python3 fix.py
-    
-    - name: Fix all encoding issues
-      run: |
-        python3 -c "
-        import os
-        import sys
-        from pathlib import Path
-        
-        try:
-            import chardet
-        except ImportError:
-            os.system('pip install chardet')
-            import chardet
-        
-        def fix_encoding(file_path):
-            try:
-                with open(file_path, 'rb') as f:
-                    raw = f.read()
-                result = chardet.detect(raw)
-                encoding = result['encoding'] or 'utf-8'
-                
-                try:
-                    content = raw.decode(encoding)
-                except:
-                    for enc in ['cp1251', 'windows-1252', 'latin-1']:
-                        try:
-                            content = raw.decode(enc)
-                            break
-                        except:
-                            continue
-                    else:
-                        return False
-                
-                replacements = {
-                    '\x97': '—', '\x96': '–', '\x93': '\"', '\x94': '\"',
-                    '\x91': \"'\", '\x92': \"'\", '\x85': '…'
-                }
-                for old, new in replacements.items():
-                    content = content.replace(old, new)
-                
-                with open(file_path, 'w', encoding='utf-8') as f:
-                    f.write(content)
-                return True
-            except:
-                return False
-        
-        for py_file in Path('.').rglob('*.py'):
-            if any(p in py_file.parts for p in ['venv', '__pycache__']):
-                continue
-            try:
-                with open(py_file, 'r', encoding='utf-8') as f:
-                    f.read()
-            except UnicodeDecodeError:
-                if fix_encoding(py_file):
-                    print(f'✅ Fixed: {py_file}')
-        "
-    
-    - name: Validate Python syntax
-      run: |
-        echo "=== Проверка синтаксиса Python ==="
-        find . -name "*.py" -type f ! -path "*/venv/*" ! -path "*/__pycache__/*" | while read file; do
-          python3 -m py_compile "$file" || exit 1
-        done
-        echo "✅ Синтаксис Python - OK"
-    
-    - name: Check for common issues
-      run: |
-        echo "=== Проверка общих проблем ==="
-        
-        # Проверка UTF-8
-        if find . -name "*.py" -type f ! -path "*/venv/*" -exec file {} \; | grep -v "UTF-8"; then
-          echo "⚠️  Найдены файлы не в UTF-8"
-        else
-          echo "✅ Все файлы в UTF-8"
-        fi
-        
-        # Проверка requirements
-        if [ -f "requirements.txt" ] || [ -f "requirements/base.txt" ]; then
-          echo "✅ requirements.txt найден"
-        else
-          echo "⚠️  requirements.txt не найден"
-        fi
-        
-        echo ""
-        echo "🎉 Проверка завершена успешно!"
-    
-    - name: Commit fixes (if any)
-      if: github.event_name == 'push'
-      run: |
-        git config --local user.email "github-actions[bot]@users.noreply.github.com"
-        git config --local user.name "github-actions[bot]"
-        
-        if git diff --quiet; then
-          echo "Нет изменений для коммита"
-        else
-          git add .
-          git commit -m "fix: resolve encoding issues [skip ci]"
-          git push
-          echo "✅ Изменения закоммичены и запушены"
-        fi
+      - name: Checkout code
+        uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+      - name: Validate UTF-8 and Python syntax
+        run: python3 scripts/check_python_syntax.py

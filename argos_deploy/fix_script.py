@@ -5,7 +5,7 @@ marker = """            sock.close()
             pass
 
     async def cmd_tg_health"""
-new_methods = """
+new_methods = '''
     # APK BUILD SUPPORT
 
     def _build_apk_sync(self) -> tuple[bool, str]:
@@ -43,7 +43,7 @@ new_methods = """
                 return sorted(matches, key=os.path.getmtime, reverse=True)[0]
         return None
 
-"""
+'''
 replacement = """            sock.close()
         except Exception:
             pass

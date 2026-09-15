@@ -7,14 +7,16 @@
 import os
 import sys
 import ast
-import py_compile
+import importlib.util
 from pathlib import Path
 import subprocess
+
+from scripts.check_python_syntax import check_source, print_selection, tracked_python_sources
 
 
 class ProjectValidator:
     def __init__(self, project_dir):
-        self.project_dir = Path(project_dir)
+        self.project_dir = Path(project_dir).resolve()
         self.errors = []
         self.warnings = []
         self.success = []
@@ -25,97 +27,67 @@ class ProjectValidator:
         print(f"  {text}")
         print(f"{'='*70}\n")
     
+    def _python_files(self):
+        """Cache the shared selection and preserve discovery failures."""
+        if not hasattr(self, "_selected_python_files"):
+            try:
+                files, excluded = tracked_python_sources(self.project_dir)
+                print_selection(files, excluded)
+                if not files:
+                    self.errors.append("No tracked first-party Python files")
+                self._selected_python_files = files
+            except RuntimeError as exc:
+                self.errors.append(str(exc))
+                self._selected_python_files = []
+        return self._selected_python_files
+
     def check_python_syntax(self):
-        """Проверяет синтаксис всех Python файлов."""
+        """Validate tracked first-party source without executing it."""
         self.print_header("🔍 ПРОВЕРКА СИНТАКСИСА PYTHON")
-        
-        python_files = list(self.project_dir.rglob('*.py'))
-        python_files = [f for f in python_files if not any(
-            part in f.parts for part in ['venv', '.venv', '__pycache__', 'node_modules']
-        )]
-        
-        print(f"Найдено Python файлов: {len(python_files)}\n")
-        
-        for py_file in python_files:
+        for path in self._python_files():
             try:
-                # Проверка UTF-8 кодировки
-                with open(py_file, 'r', encoding='utf-8') as f:
-                    content = f.read()
-                
-                # Проверка синтаксиса через AST
-                ast.parse(content, filename=str(py_file))
-                
-                # Компиляция
-                py_compile.compile(str(py_file), doraise=True)
-                
-                self.success.append(f"✅ {py_file.relative_to(self.project_dir)}")
-                
-            except UnicodeDecodeError as e:
-                error_msg = f"❌ Ошибка кодировки: {py_file.relative_to(self.project_dir)}\n   {e}"
-                self.errors.append(error_msg)
-                print(error_msg)
-                
-            except SyntaxError as e:
-                error_msg = f"❌ Синтаксическая ошибка: {py_file.relative_to(self.project_dir)}\n   Строка {e.lineno}: {e.msg}"
-                self.errors.append(error_msg)
-                print(error_msg)
-                
-            except Exception as e:
-                error_msg = f"❌ Ошибка: {py_file.relative_to(self.project_dir)}\n   {e}"
-                self.errors.append(error_msg)
-                print(error_msg)
-        
+                check_source(path, self.project_dir)
+                self.success.append(f"✅ {path.relative_to(self.project_dir)}")
+            except (OSError, UnicodeError, SyntaxError, ValueError) as exc:
+                message = f"❌ {path.relative_to(self.project_dir)}: {exc}"
+                self.errors.append(message)
+                print(message)
         if not self.errors:
-            print("✅ Все файлы прошли проверку синтаксиса!")
-    
+            print("✅ Все проверяемые файлы прошли проверку синтаксиса")
+
     def check_imports(self):
-        """Проверяет импорты в Python файлах."""
-        self.print_header("📦 ПРОВЕРКА ИМПОРТОВ")
-        
-        python_files = list(self.project_dir.rglob('*.py'))
-        python_files = [f for f in python_files if not any(
-            part in f.parts for part in ['venv', '.venv', '__pycache__', 'node_modules']
-        )]
-        
-        import_errors = []
-        
-        for py_file in python_files:
+        """Check top-level import availability without importing application code."""
+        self.print_header("📦 ДОСТУПНОСТЬ ИМПОРТОВ (БЕЗ ЗАПУСКА)")
+        unavailable = []
+        availability = {}
+        for path in self._python_files():
             try:
-                with open(py_file, 'r', encoding='utf-8') as f:
-                    content = f.read()
-                
-                tree = ast.parse(content)
-                
-                for node in ast.walk(tree):
-                    if isinstance(node, ast.Import):
-                        for alias in node.names:
-                            try:
-                                __import__(alias.name.split('.')[0])
-                            except ImportError:
-                                msg = f"⚠️  {py_file.relative_to(self.project_dir)}: import {alias.name}"
-                                import_errors.append(msg)
-                    
-                    elif isinstance(node, ast.ImportFrom):
-                        if node.module:
-                            try:
-                                __import__(node.module.split('.')[0])
-                            except ImportError:
-                                msg = f"⚠️  {py_file.relative_to(self.project_dir)}: from {node.module}"
-                                import_errors.append(msg)
-                
-            except Exception as e:
+                tree = ast.parse(path.read_text(encoding="utf-8-sig"))
+            except (OSError, UnicodeError, SyntaxError):
                 continue
-        
-        if import_errors:
-            print("Обнаружены недоступные импорты (могут быть опциональными):\n")
-            for error in import_errors[:10]:  # Показываем первые 10
-                print(error)
-            if len(import_errors) > 10:
-                print(f"\n... и еще {len(import_errors) - 10} импортов")
-            self.warnings.extend(import_errors)
-        else:
-            print("✅ Все импорты доступны!")
-    
+            names = set()
+            for node in ast.walk(tree):
+                if isinstance(node, ast.Import):
+                    names.update(alias.name.split(".")[0] for alias in node.names)
+                elif isinstance(node, ast.ImportFrom) and node.module and node.level == 0:
+                    names.add(node.module.split(".")[0])
+            for name in sorted(names):
+                if name not in availability:
+                    local = ((self.project_dir / f"{name}.py").is_file()
+                             or (self.project_dir / name).is_dir())
+                    try:
+                        availability[name] = local or importlib.util.find_spec(name) is not None
+                    except (ImportError, AttributeError, ValueError):
+                        availability[name] = False
+                if not availability[name]:
+                    unavailable.append(f"⚠️ {path.relative_to(self.project_dir)}: {name}")
+        self.warnings.extend(unavailable)
+        for message in unavailable[:10]:
+            print(message)
+        if len(unavailable) > 10:
+            print(f"... и ещё {len(unavailable) - 10} недоступных импортов")
+        print("Проверено наличие модулей; работоспособность импортов не подтверждается.")
+
     def check_requirements(self):
         """Проверяет наличие requirements.txt и его корректность."""
         self.print_header("📋 ПРОВЕРКА ЗАВИСИМОСТЕЙ")
@@ -232,7 +204,7 @@ class ProjectValidator:
                 print(f"\n{error}")
             return False
         else:
-            print("\n🎉 ПРОЕКТ ГОТОВ К РЕЛИЗУ!")
+            print("\n✅ СТАТИЧЕСКИЕ ПРОВЕРКИ ПРОЙДЕНЫ")
             return True
     
     def run_all_checks(self):

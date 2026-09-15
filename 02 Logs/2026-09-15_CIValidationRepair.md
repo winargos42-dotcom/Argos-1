@@ -1,0 +1,31 @@
+# ARGOS CI validation repair — 2026-09-15
+
+## Observed failures
+
+The September 13 main runs 34789684306, 34789684308, 34789684316 and 34789684335 failed while compiling every Python file in the checkout, including historical backups, installed environments and vendored Python 2 sources. First-party maintenance scripts also contained five genuine syntax errors. Release CI could not build PyAudio because `portaudio.h` was missing; `|| true` concealed the dependency installation failure.
+
+## Repair scope
+
+- `scripts/check_python_syntax.py` lists tracked Python files using Git's NUL-delimited output. It excludes named backup/vendor trees and environment/cache directories, prints exclusion counts, and compiles UTF-8 source in memory. Missing tracked files, Git errors, empty selection and syntax errors fail the command. Application code is never executed.
+- `validate_project.py` uses the same source selection and checks top-level import availability without importing application modules. Its final message reports static checks only.
+- Four workflows use the shared check. Automatic encoding rewrites and auto-commits were removed from validation. Release CI installs `portaudio19-dev` and no longer ignores dependency or validator failures.
+- Fixed nested string delimiters in `argos_deploy/fix_script.py`, misplaced global declarations in both release_final.py copies, an incomplete duplicate condition in debug_argos_client.py, and broken import statements in scripts/add_apk.py.
+- The existing 30% application coverage threshold is unchanged. No production application, credentials, database, volume or deployment configuration was modified.
+
+## Proof and review
+
+- Before implementation, the new regression suite produced 11 failures and 2 passes.
+- After implementation, `python -m pytest tests/test_status_report.py tests/test_python_validation.py -q -o addopts=''` passed all 22 cases.
+- Before staging the two new Python files, the scanner checked 778 first-party files out of 7,336 tracked Python files: 778 passed, 0 failed. It reported 6,558 excluded files by category.
+- `validate_project.py` passed static checks with 0 errors; missing optional imports are warnings, not a runtime success claim.
+- New checker, validator and tests parse with Python 3.10 grammar. Workflow YAML parsing and `git diff --check` passed.
+- Independent automated Python review: Code Tytor, expert level, security/bugs/tests checks, September 15; returned 0 issues and 0 improvements for the checker, validator and regression tests. Workflow logic and the five syntax edits were additionally reviewed locally. This is automated review, not a human approval or application runtime test.
+- Hosted branch and main results must be recorded after publication; local proof alone does not establish hosted success.
+
+## Remaining application test gap
+
+`pytest --cov=src --cov-fail-under=30 -q --tb=short` runs the 22 root report/validation tests and fails the coverage gate: 0 of 18,434 application statements covered (0.00%). The tests themselves pass. `pytest.ini` selects only the root `tests` directory; surviving application tests live under `argos_deploy/tests`, whose conftest selects the deployed source tree. Root and deployed source trees differ. Restoring the application suite requires the correct dependencies and source selection, not lowering the threshold or blindly copying tests.
+
+## Delivery and rollback
+
+Owner authorization: apply fixes so ARGOS works. Publish the repair branch, verify the relevant hosted checks, then apply this scoped CI repair to main. This is not a release or a claim that the coverage gate passes. Revert this repair commit to roll back; it has no state migration. Follow up on application tests and upstream approval permissions separately.

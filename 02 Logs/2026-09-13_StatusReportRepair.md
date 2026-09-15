@@ -22,7 +22,12 @@ The surviving script under `argos_deploy/` expected an older layout and attempte
 - Final workflow shell: 24 combinations of format and test/report outcomes checked; every failure returns exit code 1.
 - Python 3.10 grammar checks passed; local test runtime is Python 3.12.
 - `git diff --check`: passed.
-- Hosted Actions execution and artifact upload remain to be verified after publication.
+- Applied to main as `4345b417599905411326a8e9d7df9df7e48c1034`.
+- Hosted branch run https://github.com/winargos42-dotcom/Argos-1/actions/runs/34789645160 passed on Python 3.10.
+- Hosted main run https://github.com/winargos42-dotcom/Argos-1/actions/runs/34789684325 passed and uploaded `argos-status-report-md-30` (artifact 10328200007).
+- The next scheduled report, https://github.com/winargos42-dotcom/Argos-1/actions/runs/34864635100, also passed on September 14.
+- Android build https://github.com/winargos42-dotcom/Argos-1/actions/runs/34789684294 passed and uploaded `argos-apk-debug-63` (22,148,241-byte archive). No device execution was performed.
+- Docker build https://github.com/winargos42-dotcom/Argos-1/actions/runs/34789684337 passed. Separate syntax and coverage failures remain documented in the September 15 log.
 
 ## Separate upstream notification
 
