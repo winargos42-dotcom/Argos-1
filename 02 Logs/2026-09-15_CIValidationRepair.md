@@ -20,7 +20,7 @@ The September 13 main runs 34789684306, 34789684308, 34789684316 and 34789684335
 - `validate_project.py` passed static checks with 0 errors; missing optional imports are warnings, not a runtime success claim.
 - New checker, validator and tests parse with Python 3.10 grammar. Workflow YAML parsing and `git diff --check` passed.
 - Independent automated Python review: Code Tytor, expert level, security/bugs/tests checks, September 15; returned 0 issues and 0 improvements for the checker, validator and regression tests. Workflow logic and the five syntax edits were additionally reviewed locally. This is automated review, not a human approval or application runtime test.
-- Hosted branch and main results must be recorded after publication; local proof alone does not establish hosted success.
+- First hosted branch run 34961600861 on Python 3.10 caught one additional pre-existing error in `argos_deploy/argoss/validate_project.py`: a backslash inside an f-string expression. Extracting the line count outside the expression restores compatibility. Local Python 3.12 grammar-version parsing did not catch this restriction, so the repeated hosted Python 3.10 check is required.
 
 ## Remaining application test gap
 
