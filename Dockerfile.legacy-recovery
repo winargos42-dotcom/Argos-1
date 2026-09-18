@@ -56,11 +56,12 @@ from pathlib import Path
 cloud_path = Path('/app/cloud_entry.py')
 cloud_text = cloud_path.read_text(encoding='utf-8')
 dotenv_needle = '            load_dotenv(env_path, override=True)\n'
-if dotenv_needle not in cloud_text:
+dotenv_replacement = '            load_dotenv(env_path, override=False)\n'
+if dotenv_needle not in cloud_text and dotenv_replacement not in cloud_text:
     raise SystemExit('cloud_entry dotenv override marker not found')
 cloud_text = cloud_text.replace(
     dotenv_needle,
-    '            load_dotenv(env_path, override=False)\n',
+    dotenv_replacement,
     1,
 )
 cloud_needle = '        app.mount("/", mcp.app)\n\n        _ready = True\n'

@@ -474,13 +474,20 @@ class ArgosCore:
     # ═══════════════════════════════════════════════════════
     def _init_c2_system(self):
         """[C2] Инициализация Command & Control через Gist."""
+        self.c2_gist = None
+        self.c2_drone = None
         if not C2_AVAILABLE:
             log.info("C2 System: недоступен (модули не импортированы)")
             return
+        gist_id = _read_secret_env("ARGOS_GIST_ID")
+        github_token = _read_secret_env("ARGOS_GITHUB_TOKEN")
+        if not gist_id or not github_token:
+            log.info("C2 System: не настроен (нужны ARGOS_GIST_ID и ARGOS_GITHUB_TOKEN)")
+            return
         try:
-            self.c2_gist = GistC2(core=self)
-            self.c2_drone = GhostDroneClient(core=self)
-            log.info("C2 System: OK (GistC2 + GhostDrone)")
+            self.c2_gist = GistC2(gist_id=gist_id, github_token=github_token)
+            self.c2_drone = GhostDroneClient(gist_id=gist_id, github_token=github_token)
+            log.info("C2 System: настроен (GistC2 + GhostDrone); API не проверен, слушатели не запущены")
         except Exception as e:
             self.c2_gist = None
             self.c2_drone = None

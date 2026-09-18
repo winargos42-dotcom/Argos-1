@@ -39,3 +39,19 @@ After explicit consent, configure the intended AI provider and a separate cloud-
 ## Rollback
 
 Revert this scoped code repair if necessary. No data migration or persistent-state rewrite occurred. Do not restore unauthenticated public MCP access on a service containing live provider credentials.
+
+## Follow-up: Gist and P2P continuity
+
+The cloud access repair was published as `d23e72eb87b11581e3c8740c90df87f5c385301f`. Branch run `35335503264` proved 784 source files and 169 selected tests on hosted Python 3.10; main validation `35335585344` succeeded. The live `argos-full` deployment remained `dcc86a80-63ed-4853-a530-5a65cf6a9243` during verification.
+
+After the user recalled Gist/P2P, inspection found three distinct mechanisms: CI report publication to GitHub Gist, Gist command/telemetry files, and Grist tables (`ArgosStore`, `ArgosNodes`, `ArgosEvents`). Command Gist files overwrite their latest entry and are not a full MemPalace export. Grist can hold memory values, but the recovered backup contains placeholder Grist credentials with the integration disabled. No Gist target was identified from that backup or the two inspected public profile pages.
+
+Canonical core initializers passed `core=self` to constructors requiring `gist_id` and `github_token`, then suppressed the resulting exception. Both source copies now initialize only with explicit ARGOS-prefixed Gist settings and matching constructor arguments. Absence, partial configuration or constructor failure leaves both clients disabled. Logs state that API access is unverified and listeners are not started. Eighteen regressions failed before repair and pass afterward, using actual constructors with fake credentials and blocked network/thread startup. Only the two initializer methods changed.
+
+The previous dotenv fix exposed a strict string marker in `Dockerfile.legacy-recovery`. That build patch now accepts either the historical override=True call or the already corrected override=False call, while unexpected forms still abort. Tests execute the real heredoc over isolated temporary source copies, without booting ARGOS: baseline 1 failure/2 passes, repaired 3 passes plus 2 subtests. P2P, Telegram and Gist insertion blocks are preserved and their generated Python compiles. This is patch verification, not a full image build or deployment.
+
+The Report to Gist workflow had never invoked its publisher; it only echoed a publication message. It now explicitly warns and records in the job summary that no Gist was updated. Its unused secret bindings were removed. Actual publication remains pending a verified target and report-generation wiring; no Gist was written here.
+
+Remaining P2P gaps: config probes port 8000 but `connect_to(ip)` uses the bridge's default 55771/TCP; discovery uses 55772/UDP. The three stored Azure peers have not been probed or joined. Ordinary deployment startup leaves `core.p2p` unset, while the legacy Docker patch initializes it. Existing `/app/persist/config` contents are only seeded when empty. No configuration overwrite, peer connection, remote command or queue execution occurred.
+
+Read-only checks of the older `argos-reboot-v2` endpoint obtained a status response (`ok=true`, AI mode Auto), while health/provider requests timed out. Recent legacy logs contained GigaChat HTTPS attempts and recurring Ollama failures; these do not prove a successful AI answer. No recovered key was used for these status/log reads.

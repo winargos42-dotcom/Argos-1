@@ -31,7 +31,8 @@ jobs:
           python -m pytest --rootdir=. -c ../pytest.ini --import-mode=importlib
           --noconftest tests/test_browser_conduit.py
           tests/test_requirements_runtime_deps.py tests/test_runtime_test_isolation.py
-          tests/test_cloud_auth.py tests/test_ai_provider_configuration.py -q -o addopts=''
+          tests/test_cloud_auth.py tests/test_ai_provider_configuration.py
+          tests/test_legacy_recovery_build.py tests/test_gist_initialization.py -q -o addopts=''
       - name: Test deployed runtime modules with isolated fixtures
         working-directory: argos_deploy
         timeout-minutes: 2

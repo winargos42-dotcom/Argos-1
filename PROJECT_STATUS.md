@@ -1,7 +1,7 @@
 # PROJECT STATUS — ARGOS Universal OS
 
 Checkpoint: 2026-09-18. Repository: `winargos42-dotcom/Argos-1`.
-The browser handoff repair is applied as `89c3267291bcc4c5dba5ea80a733e11fa816b4c2` on `main`. This checkpoint adds cloud access protection, accurate GigaChat configuration detection, and runtime test isolation.
+The cloud access, GigaChat diagnostic and runtime test-isolation repair is applied as `d23e72eb87b11581e3c8740c90df87f5c385301f` on `main`. Main validation run `35335585344` succeeded. This follow-up repairs Gist initialization and keeps the legacy recovery build compatible.
 
 ## Current goal
 
@@ -52,6 +52,9 @@ The next isolated test repair removes eager core loading from the deployment aut
 
 ## Other known gaps
 
+- Gist/P2P continuity: the legacy recovery image includes a P2P startup patch and legacy Gist constructor adaptation. Canonical C2 initialization now uses explicit `ARGOS_GIST_ID`/`ARGOS_GITHUB_TOKEN` with the real constructor arguments; missing configuration stays disabled and no listener is started. The backup contains no such Gist settings. Its Grist settings are placeholders with Grist disabled; Grist is a separate potential memory store, not an identified recovered backup.
+- The Report to Gist workflow was only an echo placeholder. It now emits an explicit warning and summary that no report was uploaded. Restoring publication still requires a verified target and connecting report generation to the existing publisher. A green historical run did not prove a Gist update.
+- P2P static configuration probes port 8000 while the bridge connects on its own port (default 55771/TCP, with discovery on 55772/UDP). Three historical Azure peers are recorded; current reachability is unverified. Ordinary cloud startup does not initialize `core.p2p`; the legacy image does. Existing persistent peer configuration is seeded only into an empty directory and must not be overwritten blindly.
 - Upstream run [31480145521](https://github.com/poilopr57-a11y/Argos/actions/runs/31480145521) expired awaiting owner approval and ran zero jobs. The connected account has read-only access there; fork code changes cannot retroactively approve it.
 - Android launch on a phone/emulator and the current Windows installer remain unverified. The Android UI is a minimal shell and contains static status text.
 - Version metadata and historical repository links still differ across README, package metadata, Buildozer and the mobile UI. Resolve them before a tagged release.

@@ -3609,6 +3609,12 @@
 - Проверка: 78 deployment helper/access/configuration tests, 69 existing runtime-module tests, and 22 root tests passed locally. Parent review corrected CORS ordering and the second dotenv override. Existing 30% release coverage gate retained.
 - Blocker: automatic approval review rejected use of recovered GigaChat/DeepSeek credentials without explicit consent. No key values printed, no recovered credentials applied, no Railway rollout or persistent-state change performed. Public health is not AI inference proof.
 
+## Session — 2026-09-18 Gist and P2P continuity
+- Action: Inspected the user's remembered Gist/P2P mechanisms; fixed canonical C2 constructor calls and legacy image dotenv patch compatibility.
+- Изменено: root/deployment core C2 initializers, Dockerfile.legacy-recovery, two offline regression modules, validation workflow, truthful Gist publication warning, status/handoff records.
+- Проверка: 18 C2 regressions and 3 legacy build-patch tests (plus 2 subtests) passed without external transport. Both legacy patch forms work; unexpected markers still fail. Cloud repair d23e72e previously passed hosted main validation 35335585344.
+- Remaining: no actual Gist publication or current P2P connectivity verified. Backup has no ARGOS-prefixed Gist settings; Grist values are placeholders and that integration is disabled. Do not use generic GIST_ID as a command-channel identifier or overwrite persistent peer config. Credential-use approval blocker remains.
+
 ## Task Handoff
 After each task return:
 1. Сохрани Obsidian-отчёт в `02 Logs/YYYY-MM-DD <тема>.md`

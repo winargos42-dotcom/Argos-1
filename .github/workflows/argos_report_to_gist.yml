@@ -14,10 +14,7 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v2
 
-      - name: Publish to Gist
-        env:
-          GIST_ID: ${{ secrets.GIST_ID }}
-          GIST_TOKEN: ${{ secrets.GIST_TOKEN }}
+      - name: Report Gist publication status
         run: |
-          # code to publish to Gist
-          echo "Publishing to Gist..."
+          echo "::warning::Gist publication is not connected: this workflow has not uploaded a report."
+          echo "No Gist was updated. Connect report generation and the publisher to a verified target before relying on this workflow as a backup." >> "$GITHUB_STEP_SUMMARY"
