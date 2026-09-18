@@ -292,7 +292,9 @@ class HuggingFaceAI:
         if ref["kind"] == "model":
             return ref["model_id"]
         if DEFAULT_TEXT_MODEL:
-            return DEFAULT_TEXT_MODEL
+            text_ref = _parse_model_ref(DEFAULT_TEXT_MODEL)
+            if text_ref["kind"] == "model":
+                return text_ref["model_id"]
         raise RuntimeError(
             "HuggingFace: для text generation укажи модель в HUGGINGFACE_TEXT_MODEL "
             "или используй model=<repo_id>."

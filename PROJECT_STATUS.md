@@ -1,7 +1,7 @@
 # PROJECT STATUS — ARGOS Universal OS
 
 Checkpoint: 2026-09-18. Repository: `winargos42-dotcom/Argos-1`.
-The cloud access, GigaChat diagnostic and runtime test-isolation repair is applied as `d23e72eb87b11581e3c8740c90df87f5c385301f` on `main`. Main validation run `35335585344` succeeded. This follow-up repairs Gist initialization and keeps the legacy recovery build compatible.
+The Gist and legacy recovery repair is applied as `69bafe4631e98ba83e6fccd0ab8b0b038e97aa19` on `main`. Main validation run `35336550117` succeeded after branch run `35336476602` checked 786 Python files and 190 selected tests. This follow-up repairs Gemini and Hugging Face integration and records a verified surviving memory backup.
 
 ## Current goal
 
@@ -24,11 +24,22 @@ The Railway health response confirms initialized service availability. Read-only
 
 ## Recovered configuration and cloud access
 
-The user clarified on September 18 that working credentials were in the prior history. Personal Context located the historical `.env.bak` in the upstream repository; its blob matches the backup in this fork. The file contains populated AI-provider settings, including GigaChat's client-ID/client-secret pair. Values were not printed or added to repair commits. Their present validity has **not** been verified: automatic approval review rejected the attempted GigaChat and DeepSeek authenticated checks and requires explicit consent to use recovered credentials with those providers. No recovered key was applied to Railway.
+The user clarified on September 18 that working credentials were in the prior history. Personal Context located the historical `.env.bak` in the upstream repository; its blob matches the backup in this fork. The file contains populated AI-provider settings, including GigaChat's client-ID/client-secret pair. Values were not printed or added to repair commits. The owner subsequently gave explicit permission to use the recovered credentials. Narrow GigaChat, DeepSeek, Gemini and Hugging Face checks timed out from this environment; that does not establish invalid credentials. No recovered provider key was applied to Railway.
 
-This repair adds a cloud-only bearer guard using `ARGOS_MCP_API_KEY`. Public status reads at `/` and `/health` remain available; protected requests require a valid bearer token, with missing configuration failing closed. CORS preflight can complete without dispatching a protected handler. Both cloud and main dotenv loaders preserve deployed environment values. Local MCP behavior is unchanged. The repository repair is prepared for deployment; the running Railway service remains on its previously verified deployment until the cloud rollout and credential setup are performed.
+The cloud-only bearer guard uses `ARGOS_MCP_API_KEY`. Public status reads at `/` and `/health` remain available; protected requests require a valid bearer token, with missing configuration failing closed. CORS preflight can complete without dispatching a protected handler. Both cloud and main dotenv loaders preserve deployed environment values. Local MCP behavior is unchanged. A fresh access key and the three external-communication guard settings were staged on the existing service with deployment suppressed. The provider rejected the subsequent deployment attempt. No new runtime was created, and the existing volume was preserved. The old running deployment must not be described as protected by the new code.
 
 GigaChat diagnostics now recognize access tokens and the complete client credential pair as well as the legacy API-key variable. The report explicitly describes detected configuration and does not claim that an API request succeeded.
+
+## Hugging Face and Google recovery
+
+- Downloaded the surviving `AvaSiG/mempalace-db` SQLite file: 354,754,560 bytes, 92,918 rows in `drawers`, `PRAGMA integrity_check=ok`. SHA-256 matches the checksum displayed by Hugging Face. A verified recovery archive was saved for the owner; no memory contents were committed or imported into a running service.
+- Confirmed the training notebook in `AvaSiG/argos-train-notebooks` and four model repositories, including the correctly named `AvaSiG/argos-v1-gguf`. These are surviving historical resources, not proof that the last local model was recovered or that hosted inference is available.
+- The existing embedding Space is in Build error. Its requirements file contains literal backslash-n separators; the matching `argos_deploy/hf-harrier/requirements.txt` is repaired. Publication to that separate Space still requires an authenticated write path.
+- Gemini's deployment router imported the obsolete SDK despite installing `google-genai`. Both routers now use header-authenticated REST, respect the disable flag before transport, and retain bounded HTTP timeouts. SDK startup no longer lists remote models; automatic defaults omit retired 2.0 models while explicit model choices remain configurable.
+- Hugging Face text-model selection now honors `HUGGINGFACE_TEXT_MODEL` in the deployment tree. Space URLs are rejected as text-model fallbacks; embedding configuration remains separate.
+- Google Drive searches found ARGOS documents but no archives or Colab notebooks in the returned results. Historical GCP recipes identify project `argos-489214`, but their `Dockerfile.mcp` and `Dockerfile.core` inputs are absent. The separate VPN VM recipe is not evidence of a running ARGOS core.
+
+See `02 Logs/2026-09-18_HuggingFaceGoogleRecovery.md` for provenance, checks and remaining limits.
 
 ## Technical decisions
 
@@ -58,8 +69,8 @@ The next isolated test repair removes eager core loading from the deployment aut
 - Upstream run [31480145521](https://github.com/poilopr57-a11y/Argos/actions/runs/31480145521) expired awaiting owner approval and ran zero jobs. The connected account has read-only access there; fork code changes cannot retroactively approve it.
 - Android launch on a phone/emulator and the current Windows installer remain unverified. The Android UI is a minimal shell and contains static status text.
 - Version metadata and historical repository links still differ across README, package metadata, Buildozer and the mobile UI. Resolve them before a tagged release.
-- Public ARGOS model/dataset copies remain on Hugging Face; recovery of the latest lost local model and MemPalace state is not established.
-- Markdown inventory including this checkpoint: 380 files, with 47 project documents/logs and 333 vendored npm documents. Project instructions, recovery notes and release guidance were reviewed for this repair; dependency manuals were indexed, not audited.
+- A historical MemPalace SQLite snapshot was recovered and verified. Recovery of the latest lost local state and attachment of that snapshot to a live ARGOS service remain unverified.
+- Markdown inventory including this checkpoint: 381 files, with 48 project documents/logs and 333 vendored npm documents. Project instructions, recovery notes and release guidance were reviewed for this repair; dependency manuals were indexed, not audited.
 - The two supplied ChatGPT share links could not be fetched by the browsing service (`DisabledError`); they were not treated as read history.
 
 ## Next steps
@@ -71,4 +82,4 @@ The next isolated test repair removes eager core loading from the deployment aut
 
 ## Handoff and rollback
 
-Detailed repair records: `02 Logs/2026-09-13_StatusReportRepair.md`, `02 Logs/2026-09-15_CIValidationRepair.md`, `02 Logs/2026-09-18_BrowserHandoffRepair.md` and `02 Logs/2026-09-18_CloudAccessRecovery.md`. Revert the corresponding repair commit to roll back. No database migration or persistent-data rewrite was performed. The previous packaging handoff remains in Git history at `4345b417599905411326a8e9d7df9df7e48c1034:PROJECT_STATUS.md`.
+Detailed repair records: `02 Logs/2026-09-13_StatusReportRepair.md`, `02 Logs/2026-09-15_CIValidationRepair.md`, `02 Logs/2026-09-18_BrowserHandoffRepair.md`, `02 Logs/2026-09-18_CloudAccessRecovery.md` and `02 Logs/2026-09-18_HuggingFaceGoogleRecovery.md`. Revert the corresponding repair commit to roll back. No database migration or persistent-data rewrite was performed. The previous packaging handoff remains in Git history at `4345b417599905411326a8e9d7df9df7e48c1034:PROJECT_STATUS.md`.

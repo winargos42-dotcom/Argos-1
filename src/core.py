@@ -151,27 +151,19 @@ class _GeminiCompatClient:
     DEFAULT_MODELS = (
         "gemini-2.5-flash",
         "gemini-2.5-flash-lite",
-        "gemini-2.0-flash",
-        "gemini-2.0-flash-lite",
     )
     DEPRECATED_MODEL_PREFIXES = ("gemini-1.5",)
 
     def __init__(self, api_key: str, model_name: str = "gemini-2.5-flash"):
-        # trust_env=False — игнорировать системный прокси Windows (Mihomo/Clash/NekoRay)
-        # Создаём клиента: сначала пробуем с http_options, иначе стандартно
-        try:
-            import httpx as _httpx
-            _http_client = _httpx.Client(trust_env=False, timeout=30.0)
-            try:
-                self.client = genai_sdk.Client(
-                    api_key=api_key,
-                    http_options={"client": _http_client},
-                )
-            except (TypeError, Exception):
-                # Старая версия SDK — без http_options
-                self.client = genai_sdk.Client(api_key=api_key)
-        except ImportError:
-            self.client = genai_sdk.Client(api_key=api_key)
+        http_options = {"timeout": 30_000}
+        sdk_types = getattr(genai_sdk, "types", None)
+        options_type = getattr(sdk_types, "HttpOptions", None)
+        if "client_args" in (getattr(options_type, "model_fields", {}) or {}):
+            http_options["client_args"] = {"trust_env": False}
+        self.client = genai_sdk.Client(
+            api_key=api_key,
+            http_options=http_options,
+        )
         self.model_name = self._resolve_model_name(model_name)
 
     @classmethod
@@ -207,6 +199,7 @@ class _GeminiCompatClient:
         result: list[str] = []
         allow_deprecated = cls._allow_deprecated_models()
         for model_name in candidates:
+            model_name = (model_name or "").strip().removeprefix("models/")
             if not model_name or model_name in seen:
                 continue
             if cls._is_deprecated_model(model_name) and not allow_deprecated:
@@ -218,31 +211,7 @@ class _GeminiCompatClient:
 
     def _resolve_model_name(self, requested: str) -> str:
         candidates = self._gemini_model_candidates(requested)
-        requested = candidates[0] if candidates else (requested or "gemini-2.5-flash")
-
-        try:
-            available = []
-            for model in self.client.models.list():
-                name = getattr(model, "name", "") or ""
-                if name:
-                    available.append(name)
-
-            if not available:
-                return requested
-
-            for cand in candidates:
-                if cand in available:
-                    return cand
-                if f"models/{cand}" in available:
-                    return f"models/{cand}"
-
-            # Берём первую flash-модель, если есть
-            for name in available:
-                if "flash" in name.lower():
-                    return name
-            return available[0]
-        except Exception:
-            return requested
+        return candidates[0] if candidates else "gemini-2.5-flash"
 
     def generate_content(self, contents):
         if isinstance(contents, list):
@@ -2623,6 +2592,8 @@ class ArgosCore:
 
     def _ask_gemini(self, context: str, user_text: str) -> str | None:
         self._last_gemini_rate_limited = False
+        if _env_disabled("ARGOS_DISABLE_GEMINI"):
+            return None
         if self._is_provider_temporarily_disabled("Gemini"):
             return None
 

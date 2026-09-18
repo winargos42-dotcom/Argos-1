@@ -32,9 +32,9 @@ The deployment autouse test fixture eagerly loaded the entire core even for unre
 
 ## Credential use and remaining rollout
 
-Automatic approval review rejected the attempted authenticated GigaChat and DeepSeek checks, citing a need for explicit user consent to transmit recovered credentials to those providers. No provider authorization or inference success was obtained. No recovered key was set in Railway, and no production deployment or volume was changed.
+Initially, automatic approval review rejected the attempted authenticated GigaChat and DeepSeek checks, citing a need for explicit user consent. The owner subsequently gave that consent on September 18. Authorized narrow provider checks then timed out; no successful provider authorization or inference was obtained. No recovered provider key was set in Railway.
 
-After explicit consent, configure the intended AI provider and a separate cloud-access bearer token in the existing `argos-full` service, deploy the reviewed code while preserving its volume, verify rejected unauthenticated access, and then verify a real authenticated AI response. Do not copy historical Telegram, device, outreach or infrastructure settings wholesale. Keep external communication restrictions enabled. Confirm the exact deployed commit rather than assuming a redeploy updates its source.
+A fresh `ARGOS_MCP_API_KEY` and `EXTERNAL_SEND_ENABLED=false`, `EXTERNAL_DRAFT_ONLY=true`, `EXTERNAL_REQUIRE_OWNER_APPROVAL=true` were staged on the existing `argos-full` service with `skipDeploys=true`. The provider rejected the deployment request, so the old runtime and persistent volume remain in place. The new access guard is not yet live. Once deployment is available, deploy the reviewed code while preserving the volume, verify rejected unauthenticated access, configure the intended provider, and verify a real authenticated AI response. Do not copy historical Telegram, device, outreach or infrastructure settings wholesale. Keep external communication restrictions enabled. Confirm the exact deployed commit rather than assuming a redeploy updates its source. Explicit credential consent is already recorded; it is no longer a pending question.
 
 ## Rollback
 

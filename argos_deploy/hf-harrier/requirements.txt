@@ -1,1 +1,5 @@
-fastapi\nuvicorn[standard]\ntransformers>=4.38.0\ntorch>=2.1.0\naccelerate\n
+fastapi
+uvicorn[standard]
+transformers>=4.38.0
+torch>=2.1.0
+accelerate

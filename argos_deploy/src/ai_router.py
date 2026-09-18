@@ -9,6 +9,7 @@ Cost Optimization:
 
 from __future__ import annotations
 import os
+import re
 import time
 import logging
 import threading
@@ -30,6 +31,43 @@ def _env_flag(name: str, default: bool = False) -> bool:
     if raw is None:
         return default
     return raw.strip().lower() in {"1", "true", "on", "yes", "да", "вкл"}
+
+
+_GEMINI_DEFAULT_MODELS = (
+    "gemini-2.5-flash",
+    "gemini-2.5-flash-lite",
+)
+_GEMINI_DEPRECATED_PREFIXES = ("gemini-1.5",)
+
+
+def _split_gemini_model_list(raw: str) -> list[str]:
+    return [item.strip() for item in re.split(r"[,;\s]+", raw or "") if item.strip()]
+
+
+def _gemini_model_candidates(requested: str = "") -> list[str]:
+    env_model = os.getenv("GEMINI_MODEL", "").strip()
+    if env_model:
+        requested = env_model
+
+    candidates = [
+        requested,
+        *_split_gemini_model_list(os.getenv("GEMINI_MODEL_CANDIDATES", "")),
+        *_GEMINI_DEFAULT_MODELS,
+    ]
+    allow_deprecated = _env_flag("ARGOS_ALLOW_DEPRECATED_GEMINI_MODELS", False)
+    seen: set[str] = set()
+    result: list[str] = []
+    for model_name in candidates:
+        model_name = (model_name or "").strip().removeprefix("models/")
+        if not model_name or model_name in seen:
+            continue
+        lowered = model_name.lower()
+        if any(lowered.startswith(prefix) for prefix in _GEMINI_DEPRECATED_PREFIXES) and not allow_deprecated:
+            log.warning("Gemini: пропускаю устаревшую модель %s", model_name)
+            continue
+        seen.add(model_name)
+        result.append(model_name)
+    return result
 
 
 # ── Пул ключей Gemini с per-key rate-limiting ─────────────────────────────────
@@ -169,21 +207,7 @@ class AIRouter:
 
     @staticmethod
     def _gemini_model_candidates() -> list[str]:
-        candidates = [
-            os.getenv("GEMINI_MODEL", "").strip(),
-            "gemini-2.5-flash",
-            "gemini-2.5-flash-lite",
-            "gemini-2.0-flash-lite",
-            "gemini-1.5-flash",
-            "gemini-1.5-flash-8b",
-        ]
-        seen: set[str] = set()
-        result: list[str] = []
-        for model_name in candidates:
-            if model_name and model_name not in seen:
-                seen.add(model_name)
-                result.append(model_name)
-        return result
+        return _gemini_model_candidates()
 
     def ask(self, prompt: str, system: str = "") -> str | None:
         """Отправить запрос — автоматически выбирает доступного провайдера."""
@@ -225,59 +249,77 @@ class AIRouter:
     # ── Провайдеры ────────────────────────────────────────────────────────────
 
     def _ask_gemini(self, prompt: str, system: str) -> str | None:
-        _GEMINI_POOL.reload()          # подхватываем новые ключи из env
-        if not _GEMINI_POOL.available():
+        if _env_flag("ARGOS_DISABLE_GEMINI"):
             return None
 
+        import requests
+
+        full = f"{system}\n\n{prompt}" if system else prompt
+        payload = {"contents": [{"parts": [{"text": full}]}]}
+        model_candidates = self._gemini_model_candidates()
+        gcp_url = os.getenv("ARGOS_GCP_URL", "").strip().rstrip("/")
+        if gcp_url:
+            try:
+                response = requests.post(
+                    f"{gcp_url}/proxy/gemini/v1/models/{model_candidates[0]}:generateContent",
+                    json=payload,
+                    timeout=8,
+                )
+                if response.status_code == 200:
+                    candidates = response.json().get("candidates", [])
+                    if candidates:
+                        return candidates[0]["content"]["parts"][0]["text"]
+            except Exception:
+                pass
+
+        _GEMINI_POOL.reload()
+        if not _GEMINI_POOL.available():
+            return None
         slot = _GEMINI_POOL.get_key()
         if slot is None:
             raise RuntimeError("Gemini: все ключи исчерпаны (rate limit), подожди минуту")
-        idx, key = slot
 
-        try:
-            import google.generativeai as genai
-
-            genai.configure(api_key=key)
-            full = f"{system}\n\n{prompt}" if system else prompt
-            model_candidates = self._gemini_model_candidates()
-            tried = []
-            for model_name in [m for m in model_candidates if m]:
-                tried.append(model_name)
+        for key_attempt in range(2):
+            idx, key = slot
+            quota_exhausted = False
+            last_error = "нет доступной модели"
+            for model_name in model_candidates:
                 try:
-                    model = genai.GenerativeModel(model_name)
-                    resp = model.generate_content(full)
-                    log.debug(f"[GeminiPool] ключ {idx} использован, модель={model_name}")
-                    return getattr(resp, "text", None) or ""
-                except Exception as model_err:
-                    # Если модели нет, пробуем следующую.
-                    if "not found" in str(model_err).lower() or "not supported" in str(model_err).lower():
-                        continue
-                    raise
-            raise RuntimeError(f"Gemini: не удалось использовать модели {tried}")
-        except Exception as e:
-            err = str(e)
-            if "429" in err or "quota" in err.lower() or "rate" in err.lower():
-                log.warning(f"[GeminiPool] ключ {idx} — rate limit, переключаем")
+                    response = requests.post(
+                        f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent",
+                        headers={"x-goog-api-key": key},
+                        json=payload,
+                        timeout=10,
+                    )
+                    data = response.json()
+                except Exception as error:
+                    raise RuntimeError(f"Gemini[key_{idx}]: {type(error).__name__}") from None
+
+                if response.status_code == 200:
+                    candidates = data.get("candidates", [])
+                    if candidates:
+                        return candidates[0]["content"]["parts"][0]["text"]
+                    return ""
+
+                last_error = f"Gemini HTTP {response.status_code}: {data}"
+                error_text = str(data).lower()
+                if response.status_code == 404 or "not found" in error_text or "not supported" in error_text:
+                    continue
+                if response.status_code == 429 or any(
+                    marker in error_text for marker in ("quota", "resource_exhausted", "rate limit")
+                ):
+                    quota_exhausted = True
+                    continue
+                raise RuntimeError(f"Gemini[key_{idx}]: {last_error}")
+
+            if quota_exhausted:
                 _GEMINI_POOL.mark_rate_limited(idx)
-                # пробуем следующий ключ рекурсивно (один раз)
-                slot2 = _GEMINI_POOL.get_key()
-                if slot2 and slot2[0] != idx:
-                    idx2, key2 = slot2
-                    try:
-                        genai.configure(api_key=key2)
-                        for model_name in self._gemini_model_candidates():
-                            try:
-                                model2 = genai.GenerativeModel(model_name)
-                                resp2 = model2.generate_content(full)
-                                return getattr(resp2, "text", None) or ""
-                            except Exception as retry_err:
-                                if "not found" in str(retry_err).lower() or "not supported" in str(retry_err).lower():
-                                    continue
-                                raise
-                        raise RuntimeError("Gemini: не найдено доступной fallback-модели")
-                    except Exception as e2:
-                        raise RuntimeError(f"Gemini[key_{idx2}]: {e2}")
-            raise RuntimeError(f"Gemini[key_{idx}]: {e}")
+                if key_attempt == 0:
+                    next_slot = _GEMINI_POOL.get_key()
+                    if next_slot and next_slot[0] != idx:
+                        slot = next_slot
+                        continue
+            raise RuntimeError(f"Gemini[key_{idx}]: {last_error}")
 
     def _ask_groq(self, prompt: str, system: str) -> str | None:
         key = os.getenv("GROQ_API_KEY", "")

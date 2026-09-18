@@ -139,81 +139,108 @@ class _GeminiResponse:
 
 class _GeminiCompatClient:
     """Лёгкий адаптер google.genai под старый интерфейс generate_content()."""
+    DEFAULT_MODELS = (
+        "gemini-2.5-flash",
+        "gemini-2.5-flash-lite",
+    )
+    DEPRECATED_MODEL_PREFIXES = ("gemini-1.5",)
+
     def __init__(self, api_key: str, model_name: str = "gemini-2.5-flash"):
-        # trust_env=False — игнорировать системный прокси Windows (Mihomo/Clash/NekoRay)
-        # Создаём клиента: сначала пробуем с http_options, иначе стандартно
-        try:
-            import httpx as _httpx
-            _http_client = _httpx.Client(trust_env=False, timeout=30.0)
-            try:
-                self.client = genai_sdk.Client(
-                    api_key=api_key,
-                    http_options={"client": _http_client},
-                )
-            except (TypeError, Exception):
-                # Старая версия SDK — без http_options
-                self.client = genai_sdk.Client(api_key=api_key)
-        except ImportError:
-            self.client = genai_sdk.Client(api_key=api_key)
+        http_options = {"timeout": 30_000}
+        sdk_types = getattr(genai_sdk, "types", None)
+        options_type = getattr(sdk_types, "HttpOptions", None)
+        if "client_args" in (getattr(options_type, "model_fields", {}) or {}):
+            http_options["client_args"] = {"trust_env": False}
+        self.client = genai_sdk.Client(
+            api_key=api_key,
+            http_options=http_options,
+        )
         self.model_name = self._resolve_model_name(model_name)
 
-    def _resolve_model_name(self, requested: str) -> str:
+    @classmethod
+    def _allow_deprecated_models(cls) -> bool:
+        return (os.getenv("ARGOS_ALLOW_DEPRECATED_GEMINI_MODELS", "") or "").strip().lower() in {
+            "1", "true", "on", "yes", "да", "вкл"
+        }
+
+    @classmethod
+    def _is_deprecated_model(cls, model_name: str) -> bool:
+        lowered = (model_name or "").strip().lower()
+        return any(lowered.startswith(prefix) for prefix in cls.DEPRECATED_MODEL_PREFIXES)
+
+    @classmethod
+    def _split_model_list(cls, raw: str) -> list[str]:
+        if not raw:
+            return []
+        return [item.strip() for item in re.split(r"[,;\s]+", raw) if item.strip()]
+
+    @classmethod
+    def _gemini_model_candidates(cls, requested: str = "") -> list[str]:
         env_model = os.getenv("GEMINI_MODEL", "").strip()
         if env_model:
             requested = env_model
 
         candidates = [
             requested,
-            "gemini-2.5-flash",
-            "gemini-2.5-flash-lite",
-            "gemini-2.0-flash-lite",
-            "gemini-1.5-flash",
-            "gemini-1.5-flash-8b",
-            "gemini-1.5-pro",
+            *cls._split_model_list(os.getenv("GEMINI_MODEL_CANDIDATES", "")),
+            *cls.DEFAULT_MODELS,
         ]
 
-        try:
-            available = []
-            for model in self.client.models.list():
-                name = getattr(model, "name", "") or ""
-                if name:
-                    available.append(name)
+        seen: set[str] = set()
+        result: list[str] = []
+        allow_deprecated = cls._allow_deprecated_models()
+        for model_name in candidates:
+            model_name = (model_name or "").strip().removeprefix("models/")
+            if not model_name or model_name in seen:
+                continue
+            if cls._is_deprecated_model(model_name) and not allow_deprecated:
+                log.warning("Gemini: пропускаю устаревшую модель %s", model_name)
+                continue
+            seen.add(model_name)
+            result.append(model_name)
+        return result
 
-            if not available:
-                return requested
-
-            for cand in candidates:
-                if cand in available:
-                    return cand
-                if f"models/{cand}" in available:
-                    return f"models/{cand}"
-
-            # Берём первую flash-модель, если есть
-            for name in available:
-                if "flash" in name.lower():
-                    return name
-            return available[0]
-        except Exception:
-            return requested
+    def _resolve_model_name(self, requested: str) -> str:
+        candidates = self._gemini_model_candidates(requested)
+        return candidates[0] if candidates else "gemini-2.5-flash"
 
     def generate_content(self, contents):
         if isinstance(contents, list):
             prompt = "\n\n".join(str(x) for x in contents if isinstance(x, str) and x.strip())
         else:
             prompt = str(contents)
-        try:
-            resp = self.client.models.generate_content(model=self.model_name, contents=prompt)
-        except Exception as first_error:
-            # Попытка один раз переключиться на доступную модель (404/NOT_FOUND и совместимость API)
-            new_model = self._resolve_model_name("gemini-2.5-flash")
-            if new_model != self.model_name:
-                self.model_name = new_model
-                resp = self.client.models.generate_content(model=self.model_name, contents=prompt)
-            else:
-                raise first_error
 
-        text = getattr(resp, "text", "") or ""
-        return _GeminiResponse(text=text)
+        # Список моделей для fallback. Устаревшие 1.5-модели исключены по умолчанию:
+        # в 2026 они часто возвращают 404 и забивают лог ложной "квотой".
+        fallback_models = self._gemini_model_candidates(self.model_name)
+        seen = set()
+        tried = []
+        last_err = None
+
+        for m in fallback_models:
+            if not m or m in seen:
+                continue
+            seen.add(m)
+            tried.append(m)
+            try:
+                resp = self.client.models.generate_content(model=m, contents=prompt)
+                # Запоминаем рабочую модель для следующих вызовов
+                self.model_name = m
+                text = getattr(resp, "text", "") or ""
+                return _GeminiResponse(text=text)
+            except Exception as err:
+                last_err = err
+                err_s = str(err).lower()
+                # Квота/429/rate — пробуем следующую (у неё своя квота)
+                if "429" in err_s or "quota" in err_s or "resource_exhausted" in err_s or "rate" in err_s:
+                    continue
+                # Модель не найдена/недоступна — тоже к следующей
+                if "not found" in err_s or "not supported" in err_s or "404" in err_s:
+                    continue
+                # Другие ошибки (auth, network) — прерываем сразу
+                raise
+
+        raise RuntimeError(f"Gemini: не удалось использовать модели {tried} — last: {last_err}")
 
 
 # [v1.20.5 Integration Imports]
@@ -2094,6 +2121,8 @@ class ArgosCore:
 
     def _ask_gemini(self, context: str, user_text: str) -> str | None:
         self._last_gemini_rate_limited = False
+        if _env_disabled("ARGOS_DISABLE_GEMINI"):
+            return None
         if self._is_provider_temporarily_disabled("Gemini"):
             return None
         if not self.model:

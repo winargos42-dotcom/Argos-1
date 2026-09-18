@@ -205,6 +205,9 @@ def _resolve_model_env() -> dict[str, Any]:
     Возвращает ref для ОБЩЕЙ модели (text gen / inference).
     HUGGINGFACE_MODEL_SPACE предназначен ТОЛЬКО для embeddings — здесь не используется.
     """
+    text_model = os.getenv("HUGGINGFACE_TEXT_MODEL", "").strip()
+    if text_model:
+        return _parse_model_ref(text_model)
     model_val = os.getenv("HUGGINGFACE_MODEL", DEFAULT_EMBED_MODEL).strip()
     return _parse_model_ref(model_val)
 
@@ -288,7 +291,9 @@ class HuggingFaceAI:
         if ref["kind"] == "model":
             return ref["model_id"]
         if DEFAULT_TEXT_MODEL:
-            return DEFAULT_TEXT_MODEL
+            text_ref = _parse_model_ref(DEFAULT_TEXT_MODEL)
+            if text_ref["kind"] == "model":
+                return text_ref["model_id"]
         raise RuntimeError(
             "HuggingFace: для text generation укажи модель в HUGGINGFACE_TEXT_MODEL "
             "или используй model=<repo_id>."

@@ -3613,7 +3613,14 @@
 - Action: Inspected the user's remembered Gist/P2P mechanisms; fixed canonical C2 constructor calls and legacy image dotenv patch compatibility.
 - Изменено: root/deployment core C2 initializers, Dockerfile.legacy-recovery, two offline regression modules, validation workflow, truthful Gist publication warning, status/handoff records.
 - Проверка: 18 C2 regressions and 3 legacy build-patch tests (plus 2 subtests) passed without external transport. Both legacy patch forms work; unexpected markers still fail. Cloud repair d23e72e previously passed hosted main validation 35335585344.
-- Remaining: no actual Gist publication or current P2P connectivity verified. Backup has no ARGOS-prefixed Gist settings; Grist values are placeholders and that integration is disabled. Do not use generic GIST_ID as a command-channel identifier or overwrite persistent peer config. Credential-use approval blocker remains.
+- Remaining: no actual Gist publication or current P2P connectivity verified. Backup has no ARGOS-prefixed Gist settings; Grist values are placeholders and that integration is disabled. Do not use generic GIST_ID as a command-channel identifier or overwrite persistent peer config. The credential-use approval blocker recorded here was superseded by the owner's later explicit consent.
+
+## Session — 2026-09-18 Hugging Face and Google recovery
+- Action: Recovered the surviving HF MemPalace SQLite snapshot and training notebook; repaired Gemini SDK/REST compatibility and HF text-model selection.
+- Изменено: Gemini segments in both core/router copies; both HF helper copies; hf-harrier requirements; two isolated regression modules; validation and recovery records.
+- Проверка: SQLite SHA-256 matches HF, integrity_check=ok, 92,918 rows. Recovery ZIP and original notebook saved privately for the owner. Gemini 46 tests and HF 22 tests passed; independent review concerns about malformed-key logs and minimum SDK options were addressed. No memory contents committed.
+- Consent: owner explicitly authorized recovered credential use. Provider checks timed out, not invalid-key results. Four cloud control settings staged without deployment; provider rejected rollout. No recovered AI key added to old public runtime, no volume overwrite. Credential consent is not a pending question.
+- Remaining: HF Space requirements repair has not been published to its separate repository; connector lacks repo-write and browser is signed out. Google Drive search found project documents but no searched archives/notebooks. GCP recipes are historical and missing two Dockerfile inputs. No live AI answer, latest-model recovery, memory import or paid job claimed.
 
 ## Task Handoff
 After each task return:
