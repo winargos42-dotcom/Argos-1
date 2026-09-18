@@ -6,6 +6,8 @@ import os
 import sys
 import threading
 import unittest
+from types import SimpleNamespace
+from unittest.mock import patch
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -151,6 +153,54 @@ class TestHandshakeTemplate(unittest.TestCase):
 
     def test_template_header(self):
         self.assertIn("[ARGOS_HANDSHAKE_V2.1]", HANDSHAKE_TEMPLATE)
+
+
+class TestBrowserConduitExternalHandoff(unittest.TestCase):
+    def test_constructor_accepts_core_without_treating_it_as_quantum_state(self):
+        core = SimpleNamespace()
+        conduit = BrowserConduit(core)
+
+        self.assertIs(conduit.core, core)
+        self.assertIn("STATUS: Analytic", conduit.prepare_message("Запрос"))
+
+    def test_external_request_returns_unsent_draft_without_io(self):
+        conduit = BrowserConduit(quantum_state="Creative", nodes_count=2)
+        unavailable = AssertionError("Draft preparation must not perform external I/O")
+        with (
+            patch("socket.socket.connect", side_effect=unavailable),
+            patch("subprocess.Popen", side_effect=unavailable),
+            patch("requests.sessions.Session.request", side_effect=unavailable),
+            patch.dict("sys.modules", {"pyautogui": None, "pyperclip": None}),
+        ):
+            result = conduit.ask_external_ai("Подготовь план восстановления")
+
+        self.assertEqual(result, {
+            "ok": False,
+            "sent": False,
+            "error": "external_ai_transport_not_configured",
+            "prepared_message": (
+                build_handshake(quantum_state="Creative", nodes_count=2)
+                + "Подготовь план восстановления"
+            ),
+        })
+
+    def test_awa_heavy_evolution_returns_unavailable_without_starting_services(self):
+        from src.awa_core import AWACore
+
+        awa = AWACore.__new__(AWACore)
+        awa.core = SimpleNamespace()
+        awa.swarm = SimpleNamespace(get_dispatch_env=lambda task_type: {})
+        awa.conduit = awa._init_browser_conduit()
+
+        self.assertIsNotNone(awa.conduit)
+        result = awa.delegate_task("HEAVY_EVOLUTION", "Проверь архитектуру")
+
+        self.assertFalse(result["ok"])
+        self.assertFalse(result["sent"])
+        self.assertEqual(result["error"], "external_ai_transport_not_configured")
+        self.assertEqual(
+            result["prepared_message"], build_handshake() + "Проверь архитектуру"
+        )
 
 
 if __name__ == "__main__":

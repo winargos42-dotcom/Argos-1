@@ -1,4 +1,12 @@
-# Session summary — 2026-09-15
+# Session summary — 2026-09-18
+
+Latest checkpoint: the CI repair is applied to main at `1a8cbea4b820865335cb334f9328c640cc7bfec8`; three validation workflows, Docker and Android succeeded. Release CI now reaches tests and fails only the unchanged coverage gate (22 tests passed, 0% coverage against 30%).
+
+BrowserConduit now restores pure handshake/session behavior and the actual AWA caller contract. Without an external transport it returns an explicit unsent draft result. Twenty-four browser tests and three repaired dependency/documentation tests pass; validation runs them separately from the 22 root tests. The deployed suite now collects 888 tests without errors, but all-suite execution and coverage are not established. See PROJECT_STATUS.md and 02 Logs/2026-09-18_BrowserHandoffRepair.md for the current handoff.
+
+Critical runtime finding: Railway health is up, but the September 16 providers diagnostic reported 0/12 active AI providers. Ollama is absent and no cloud API credential variable names were found in eight inspected ARGOS services. Do not claim AI responses are restored without a configured, successfully tested provider. Existing volumes were preserved.
+
+## Earlier repair context
 
 Current task: repair ARGOS GitHub notifications and inspect surviving cloud recovery sources.
 

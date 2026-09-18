@@ -1,12 +1,14 @@
 import unittest
 from pathlib import Path
 
-QUICKSTART_FILES = ("quickstart.md", "docs/user-guide/quickstart.md")
+DEPLOY_ROOT = Path(__file__).resolve().parents[1]
+REPOSITORY_ROOT = DEPLOY_ROOT.parent
+QUICKSTART_FILES = (REPOSITORY_ROOT / "quickstart.md",)
 
 
 class TestRequirementsRuntimeDeps(unittest.TestCase):
     def test_requirements_include_critical_ai_and_ui_packages(self):
-        text = Path("requirements.txt").read_text(encoding="utf-8")
+        text = (DEPLOY_ROOT / "requirements.txt").read_text(encoding="utf-8")
         for dep in (
             "google-genai>=",
             'ibm-watsonx-ai>=1.3.42,<1.4.0; python_version < "3.11"',
@@ -19,7 +21,7 @@ class TestRequirementsRuntimeDeps(unittest.TestCase):
             self.assertIn(dep, text)
 
     def test_build_scaffold_includes_required_dependencies(self):
-        text = Path("build.py").read_text(encoding="utf-8")
+        text = (DEPLOY_ROOT / "build.py").read_text(encoding="utf-8")
         for dep in (
             "google-genai>=",
             'ibm-watsonx-ai>=1.3.42,<1.4.0; python_version < "3.11"',

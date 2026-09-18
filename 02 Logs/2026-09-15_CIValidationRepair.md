@@ -28,4 +28,6 @@ The September 13 main runs 34789684306, 34789684308, 34789684316 and 34789684335
 
 ## Delivery and rollback
 
+Published as commits `740e9e132a7c6f0a1a19e83ce0e8129d525553b7` and `1a8cbea4b820865335cb334f9328c640cc7bfec8`, then applied to main on September 16. Branch runs 34961699155, 34961699164 and 34961699175 succeeded. Main runs 35039085439, 35039085526 and 35039085371 succeeded, as did Docker 35039085358 and Android 35039085484. Release CI 35039085678 installed dependencies, passed syntax and 22 tests, then correctly failed the unchanged 30% coverage gate at 0.00%.
+
 Owner authorization: apply fixes so ARGOS works. Publish the repair branch, verify the relevant hosted checks, then apply this scoped CI repair to main. This is not a release or a claim that the coverage gate passes. Revert this repair commit to roll back; it has no state migration. Follow up on application tests and upstream approval permissions separately.
