@@ -1,7 +1,7 @@
 # PROJECT STATUS — ARGOS Universal OS
 
 Checkpoint: 2026-09-18. Repository: `winargos42-dotcom/Argos-1`.
-The prior CI repair is applied as `1a8cbea4b820865335cb334f9328c640cc7bfec8` on `main`. This checkpoint adds the browser handoff repair and its separate deployment-helper tests.
+The browser handoff repair is applied as `89c3267291bcc4c5dba5ea80a733e11fa816b4c2` on `main`. This checkpoint adds cloud access protection, accurate GigaChat configuration detection, and runtime test isolation.
 
 ## Current goal
 
@@ -20,7 +20,15 @@ Restore reliable ARGOS checks, retain surviving cloud state, and establish a tes
 | Android artifact | September 16 build succeeded; device launch unverified | Run [35039085484](https://github.com/winargos42-dotcom/Argos-1/actions/runs/35039085484); earlier verified artifact `argos-apk-debug-63` remains in run 34789684294 |
 | Railway runtime | `/health` returned HTTP 200, `ok=true`, `ready=true`, no startup error | `argos-full-production.up.railway.app`, probe 2026-09-16 00:16 UTC; uptime 3,167,406 seconds |
 
-The Railway health response confirms initialized service availability. A separate read-only providers diagnostic on September 16 reported **0 of 12 AI providers active**, with AI mode Auto. Runtime logs repeatedly report absent Ollama and connection refusal on localhost:11434. No cloud AI credential variable names were present in the eight inspected ARGOS services. A working inference provider must be configured before claiming AI responses are restored. Existing persistent volumes and deployment configuration were preserved.
+The Railway health response confirms initialized service availability. Read-only provider diagnostics on September 16 and 18 displayed zero configured/available providers, with AI mode Auto. This report checks environment names and a local port, not authenticated inference; its GigaChat check also missed the client-ID/client-secret configuration accepted by the core. Runtime logs repeatedly report absent Ollama and connection refusal on localhost:11434. No cloud AI credential variable names were present in the eight inspected ARGOS services. These findings do not establish that historical credentials are lost. Existing persistent volumes and deployment configuration were preserved.
+
+## Recovered configuration and cloud access
+
+The user clarified on September 18 that working credentials were in the prior history. Personal Context located the historical `.env.bak` in the upstream repository; its blob matches the backup in this fork. The file contains populated AI-provider settings, including GigaChat's client-ID/client-secret pair. Values were not printed or added to repair commits. Their present validity has **not** been verified: automatic approval review rejected the attempted GigaChat and DeepSeek authenticated checks and requires explicit consent to use recovered credentials with those providers. No recovered key was applied to Railway.
+
+This repair adds a cloud-only bearer guard using `ARGOS_MCP_API_KEY`. Public status reads at `/` and `/health` remain available; protected requests require a valid bearer token, with missing configuration failing closed. CORS preflight can complete without dispatching a protected handler. Both cloud and main dotenv loaders preserve deployed environment values. Local MCP behavior is unchanged. The repository repair is prepared for deployment; the running Railway service remains on its previously verified deployment until the cloud rollout and credential setup are performed.
+
+GigaChat diagnostics now recognize access tokens and the complete client credential pair as well as the legacy API-key variable. The report explicitly describes detected configuration and does not claim that an API request succeeded.
 
 ## Technical decisions
 
@@ -40,13 +48,15 @@ Application tests survive under `argos_deploy/tests`. After restoring the browse
 
 Three dependency/documentation tests now resolve the real deployment files and canonical repository quickstart independently of the working directory. They pass. `validate.yml` runs these 27 deployment-helper tests in a separate process with no application conftest startup, in addition to the 22 root tests. The prior recovery branch's 13.5% coverage floor was not adopted; the 30% gate remains unchanged.
 
+The next isolated test repair removes eager core loading from the deployment autouse fixture. It patches the lazy loader and any already cached class, with four regressions proving deferred loading and restoration of patched methods. Sixty-nine existing file-operation, self-healing, pricing and tool-calling tests pass with the normal deployment conftest. Validation now includes these modules and the cloud/configuration regressions in explicit deployment processes. This is a bounded runtime suite, not proof that every collected application test passes. Main release run 35334279832 still measured 0% against the unchanged 30% gate.
+
 ## Other known gaps
 
 - Upstream run [31480145521](https://github.com/poilopr57-a11y/Argos/actions/runs/31480145521) expired awaiting owner approval and ran zero jobs. The connected account has read-only access there; fork code changes cannot retroactively approve it.
 - Android launch on a phone/emulator and the current Windows installer remain unverified. The Android UI is a minimal shell and contains static status text.
 - Version metadata and historical repository links still differ across README, package metadata, Buildozer and the mobile UI. Resolve them before a tagged release.
 - Public ARGOS model/dataset copies remain on Hugging Face; recovery of the latest lost local model and MemPalace state is not established.
-- Markdown inventory including this checkpoint: 379 files, with 46 project documents/logs and 333 vendored npm documents. Project instructions, recovery notes and release guidance were reviewed for this repair; dependency manuals were indexed, not audited.
+- Markdown inventory including this checkpoint: 380 files, with 47 project documents/logs and 333 vendored npm documents. Project instructions, recovery notes and release guidance were reviewed for this repair; dependency manuals were indexed, not audited.
 - The two supplied ChatGPT share links could not be fetched by the browsing service (`DisabledError`); they were not treated as read history.
 
 ## Next steps
@@ -58,4 +68,4 @@ Three dependency/documentation tests now resolve the real deployment files and c
 
 ## Handoff and rollback
 
-Detailed repair records: `02 Logs/2026-09-13_StatusReportRepair.md`, `02 Logs/2026-09-15_CIValidationRepair.md` and `02 Logs/2026-09-18_BrowserHandoffRepair.md`. Revert the corresponding repair commit to roll back. No database migration or persistent-data rewrite was performed. The previous packaging handoff remains in Git history at `4345b417599905411326a8e9d7df9df7e48c1034:PROJECT_STATUS.md`.
+Detailed repair records: `02 Logs/2026-09-13_StatusReportRepair.md`, `02 Logs/2026-09-15_CIValidationRepair.md`, `02 Logs/2026-09-18_BrowserHandoffRepair.md` and `02 Logs/2026-09-18_CloudAccessRecovery.md`. Revert the corresponding repair commit to roll back. No database migration or persistent-data rewrite was performed. The previous packaging handoff remains in Git history at `4345b417599905411326a8e9d7df9df7e48c1034:PROJECT_STATUS.md`.

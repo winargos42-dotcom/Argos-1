@@ -1,10 +1,12 @@
 # Session summary — 2026-09-18
 
-Latest checkpoint: the CI repair is applied to main at `1a8cbea4b820865335cb334f9328c640cc7bfec8`; three validation workflows, Docker and Android succeeded. Release CI now reaches tests and fails only the unchanged coverage gate (22 tests passed, 0% coverage against 30%).
+Latest checkpoint: the browser repair is applied to main at `89c3267291bcc4c5dba5ea80a733e11fa816b4c2`. The next scoped repair adds cloud bearer access control, preserves deployed dotenv settings in both entrypoints, fixes GigaChat configuration detection, and removes eager core startup from the test fixture. Local checks passed: 78 deployment helper/access/configuration tests, 69 existing runtime-module tests, and 22 root tests. Hosted Python 3.10 verification precedes main publication.
 
 BrowserConduit now restores pure handshake/session behavior and the actual AWA caller contract. Without an external transport it returns an explicit unsent draft result. Twenty-four browser tests and three repaired dependency/documentation tests pass; validation runs them separately from the 22 root tests. The deployed suite now collects 888 tests without errors, but all-suite execution and coverage are not established. See PROJECT_STATUS.md and 02 Logs/2026-09-18_BrowserHandoffRepair.md for the current handoff.
 
-Critical runtime finding: Railway health is up, but the September 16 providers diagnostic reported 0/12 active AI providers. Ollama is absent and no cloud API credential variable names were found in eight inspected ARGOS services. Do not claim AI responses are restored without a configured, successfully tested provider. Existing volumes were preserved.
+Credential recovery: the user said working keys were in history. Personal Context located `.env.bak`; the upstream backup matches the fork's blob and contains AI-provider settings. No values were printed. The earlier zero-provider report only checked settings/ports and missed GigaChat client credentials; it was not an authenticated inference check. Automatic approval review rejected GigaChat/DeepSeek key use pending explicit user consent. No recovered key was applied to Railway and no new cloud deployment was performed. Existing volumes were preserved. See `02 Logs/2026-09-18_CloudAccessRecovery.md` for the exact prepared rollout.
+
+Release CI still measures 0% against the unchanged 30% gate (latest checked main run `35334279832`). The full deployment suite and device launch remain unverified. Do not claim complete restoration from these selected tests or HTTP health alone.
 
 ## Earlier repair context
 

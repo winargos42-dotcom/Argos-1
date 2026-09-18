@@ -3603,6 +3603,12 @@
 - Изменено: argos_deploy/src/connectivity/browser_conduit.py, two deployment test modules, .github/workflows/validate.yml, PROJECT_STATUS.md, session_summary.md, dated repair logs.
 - Проверка: 24 browser tests + 3 dependency/documentation tests passed; 22 root tests passed; 888 deployment tests collected without errors. Full suite execution and 30% coverage remain unproven. Railway provider diagnostic reported 0/12 configured/available providers; this is an independent runtime blocker.
 
+## Session — 2026-09-18 Cloud access recovery
+- Action: Located the historical AI configuration backup after the user's clarification; prepared authenticated cloud access and repaired provider diagnostics/test isolation.
+- Изменено: cloud_entry.py, main.py, src/cloud_auth.py, src/ai_providers.py and focused tests under argos_deploy; validate.yml; project/session status and dated recovery log.
+- Проверка: 78 deployment helper/access/configuration tests, 69 existing runtime-module tests, and 22 root tests passed locally. Parent review corrected CORS ordering and the second dotenv override. Existing 30% release coverage gate retained.
+- Blocker: automatic approval review rejected use of recovered GigaChat/DeepSeek credentials without explicit consent. No key values printed, no recovered credentials applied, no Railway rollout or persistent-state change performed. Public health is not AI inference proof.
+
 ## Task Handoff
 After each task return:
 1. Сохрани Obsidian-отчёт в `02 Logs/YYYY-MM-DD <тема>.md`

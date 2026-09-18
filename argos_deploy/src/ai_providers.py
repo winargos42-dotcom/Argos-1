@@ -274,6 +274,18 @@ def _env_candidates(env_key: str) -> list[str]:
 
 def _provider_has_key(provider_key: str, provider: ProviderLimits) -> bool:
     """Проверяет наличие ключа с учетом алиасов и спец-случаев."""
+    if provider_key == "gigachat":
+        placeholders = {"", "your_key_here", "your_token_here", "none", "null", "changeme"}
+        configured = {
+            name for name in (
+                "GIGACHAT_API_KEY", "GIGACHAT_ACCESS_TOKEN",
+                "GIGACHAT_CLIENT_ID", "GIGACHAT_CLIENT_SECRET",
+            )
+            if os.getenv(name, "").strip().lower() not in placeholders
+        }
+        return bool(configured & {"GIGACHAT_API_KEY", "GIGACHAT_ACCESS_TOKEN"}) or {
+            "GIGACHAT_CLIENT_ID", "GIGACHAT_CLIENT_SECRET"
+        }.issubset(configured)
     if provider_key == "gemini":
         if os.getenv("GEMINI_API_KEY", "").strip():
             return True
@@ -371,19 +383,26 @@ def providers_status() -> str:
             else f"контекст={p.context_tokens // 1_000_000}M"
         )
         rate_parts = [x for x in [rpm_str, tpm_str, rph_str, rpd_str, ctx_str] if x]
+        configuration_hint = p.env_key
+        if key == "gigachat":
+            configuration_hint = (
+                "GIGACHAT_API_KEY / GIGACHAT_ACCESS_TOKEN / "
+                "(GIGACHAT_CLIENT_ID + GIGACHAT_CLIENT_SECRET)"
+            )
 
         lines.append(
             f"  {status_icon} {p.name}\n"
             f"     {' | '.join(rate_parts)}\n"
             f"     Квота: {p.free_quota}\n"
-            f"     Ключ: {p.env_key}"
+            f"     Настройка: {configuration_hint}"
         )
     lines.append("")
     ready = list(ready_set)
     lines.append(
-        f"Активных провайдеров: {len(ready)}/{len(AI_PROVIDERS)} "
+        f"Провайдеров с настройками API или доступным TCP-портом: {len(ready)}/{len(AI_PROVIDERS)} "
         f"({', '.join(ready) if ready else 'нет'})"
     )
+    lines.append("Работа API и генерация ответа не проверялись.")
     return "\n".join(lines)
 
 

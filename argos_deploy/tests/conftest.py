@@ -79,38 +79,23 @@ def _patch_argoscore_blocking(request, monkeypatch):
         except ImportError:
             pass
 
-    # Патчим _ensure_ollama_running/model напрямую через реальный модуль
-    # (ArgosCore загружается лениво через src._argos_core_impl)
-    # Не применяем для тестов Ollama (они тестируют реальное поведение)
     if not _is_ollama_test:
-        try:
-            import sys as _sys
-            from src.core import _load_argos_core_class
-            _real_cls = _load_argos_core_class()
-            monkeypatch.setattr(_real_cls, "_ensure_ollama_running",
-                                lambda self: False, raising=False)
-            monkeypatch.setattr(_real_cls, "_ensure_ollama_model",
-                                lambda self, m: False, raising=False)
-        except Exception:
-            # Если класс ещё не загружен — патчим после загрузки через sys.modules
-            _sentinel = {"patched": False}
+        from src import core as _core_pkg
 
-            try:
-                from src.core import _load_argos_core_class as _orig_load_fn
+        _original_load = _core_pkg._load_argos_core_class
 
-                def _patching_load():
-                    cls = _orig_load_fn()
-                    if not _sentinel["patched"]:
-                        cls._ensure_ollama_running = lambda self: False
-                        cls._ensure_ollama_model = lambda self, m: False
-                        _sentinel["patched"] = True
-                    return cls
+        def _patch_core_class(cls):
+            monkeypatch.setattr(cls, "_ensure_ollama_running", lambda self: False)
+            monkeypatch.setattr(cls, "_ensure_ollama_model", lambda self, model: False)
+            return cls
 
-                import src.core as _core_pkg
-                monkeypatch.setattr(_core_pkg, "_load_argos_core_class",
-                                    _patching_load, raising=False)
-            except Exception:
-                pass
+        def _patching_load():
+            return _patch_core_class(_original_load())
+
+        monkeypatch.setattr(_core_pkg, "_load_argos_core_class", _patching_load)
+        _cached = sys.modules.get("src._argos_core_impl")
+        if _cached is not None and hasattr(_cached, "ArgosCore"):
+            _patch_core_class(_cached.ArgosCore)
 
     # Патчим Thread.start — позволяем daemon-потокам стартовать, но перехватываем
     # потоки с известными именами которые блокируют завершение

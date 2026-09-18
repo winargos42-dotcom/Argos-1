@@ -50,7 +50,7 @@ from dotenv import load_dotenv
 
 # Всегда грузим .env из папки проекта — CWD уже правильный благодаря FIX-10
 _env_path = os.path.join(_PROJECT_ROOT, ".env")
-load_dotenv(_env_path, override=True)
+load_dotenv(_env_path, override=False)
 
 from src.argos_logger import get_logger
 from src.launch_config import normalize_launch_args
