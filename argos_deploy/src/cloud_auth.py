@@ -23,7 +23,7 @@ class CloudBearerAuthMiddleware:
         if (
             scope["type"] == "http"
             and scope.get("method") in {"GET", "HEAD"}
-            and scope.get("path") in {"/", "/health"}
+            and scope.get("path") in {"/", "/health", "/ui"}
         ):
             await self.app(scope, receive, send)
             return

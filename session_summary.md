@@ -1,3 +1,7 @@
+# Session — 2026-09-19 Roadmap continuation
+
+User requests all remaining stages autonomously. Implemented whole-memory index, separate facts, durable queue, streaming/cancellation, authenticated Russian /ui, shared MCP execution, and hash-checked local release/rollback utility. Browser desktop/mobile and focused tests passed; final whole-application coverage and local installation in progress. See `02 Logs/2026-09-19_RoadmapCompletion.md` and `docs/ARGOS_LOCAL_OPERATOR.md`. Cloudflare OAuth expired without owner callback; domain404, Railway still old version, target boards absent. Do not claim full completion.
+
 # Session — 2026-09-19 Core correctness
 
 The owner said to begin executing the roadmap. The first iteration implements bounded arithmetic without a model, direct file commands with exact paths/content, success/failure/unverified outcomes, truthful agent/planner reports, and explicit Ollama input-overflow rejection. Independent review defects were corrected. Final local checks: 412 tests +2 subtests passed; 802 source files passed syntax. Seven runtime files deployed with rollback copy; health ready, arithmetic/create/read/missing-file MCP checks passed. Live overflow probe returned HTTP400 in 4.925s. Full details: `02 Logs/2026-09-19_CoreCorrectness.md`. Exact token reserve, application coverage30%, broader memory/UI/cloud work remain next stages. This is not full release readiness.

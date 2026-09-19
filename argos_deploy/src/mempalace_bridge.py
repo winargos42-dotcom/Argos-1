@@ -85,7 +85,7 @@ def _sqlite_search(query: str, top_k: int, wing: str) -> list[dict]:
                 "SELECT substr(document,1,4096), substr(wing,1,128), "
                 "substr(room,1,128), lexical_score(substr(document,1,4096)) AS score "
                 "FROM drawers WHERE (? = '' OR wing = ?) AND score > 0 "
-                "LIMIT 200",
+                "ORDER BY score DESC LIMIT 10",
                 (wing, wing),
             ).fetchall()
         rows.sort(key=lambda row: row[3], reverse=True)
@@ -229,6 +229,19 @@ def search_memory(query: str, top_k: int = 5, wing: str = "") -> list[dict]:
     Семантический поиск по всему palace.
     Возвращает список: [{"text": ..., "wing": ..., "room": ..., "score": ...}]
     """
+    index_path = os.getenv("ARGOS_MEMPALACE_INDEX_PATH", "").strip()
+    facts_path = os.getenv("ARGOS_MEMPALACE_FACTS_PATH", "").strip()
+    if index_path or facts_path:
+        if not _MEMPALACE_ENABLED or top_k <= 0:
+            return []
+        from src.memory_index import search_index
+        recovered = search_index(index_path, query, top_k, wing) if index_path else _sqlite_search(query, top_k, wing) if _sqlite_path() else []
+        groups = [recovered]
+        if facts_path:
+            groups.append(search_index(facts_path, query, top_k, wing))
+        hits = [dict(hit, rank_score=1 / (60 + rank))
+                for group in groups for rank, hit in enumerate(group, 1)]
+        return sorted(hits, key=lambda hit: hit["rank_score"], reverse=True)[:min(top_k, 10)]
     if _sqlite_path():
         return _sqlite_search(query, top_k, wing)
     if not _ensure_init():
@@ -277,7 +290,13 @@ def store_memory(
     room   — комната внутри крыла (произвольная строка)
     importance — 1-5, влияет на L1 приоритет
     """
-    if _sqlite_path():
+    if os.getenv("ARGOS_MEMPALACE_FACTS_PATH", "").strip():
+        try:
+            save_fact(text, wing=wing, room=room, source=source)
+            return True
+        except (OSError, sqlite3.Error, ValueError):
+            return False
+    if _sqlite_path() or os.getenv("ARGOS_MEMPALACE_INDEX_PATH", "").strip():
         return False
     if not _ensure_init():
         return False
@@ -307,6 +326,25 @@ def store_memory(
 
 # ── Главный API ─────────────────────────────────────────────────────────────
 
+def save_fact(text: str, wing: str = "technical", room: str = "general", source: str = "user", source_file: str = "") -> dict:
+    from src.memory_index import save_fact as persist
+    path = os.getenv("ARGOS_MEMPALACE_FACTS_PATH", "").strip()
+    if not _MEMPALACE_ENABLED or not path:
+        raise ValueError("Отдельное хранилище новых фактов не настроено или память отключена")
+    ident = persist(path, text, wing=wing, room=room, source=source, source_file=source_file,
+                    protected_paths=[_sqlite_path(), os.getenv("ARGOS_MEMPALACE_INDEX_PATH", "")])
+    return {"id": ident, "origin": "fact", "saved": True}
+
+
+def memory_status() -> dict:
+    from src.memory_index import index_status
+    index = os.getenv("ARGOS_MEMPALACE_INDEX_PATH", "").strip()
+    facts = os.getenv("ARGOS_MEMPALACE_FACTS_PATH", "").strip()
+    return {"enabled": _MEMPALACE_ENABLED,
+            "index": index_status(index) if index else {"status": "not_configured"},
+            "facts": index_status(facts) if facts else {"status": "not_configured"}}
+
+
 def get_memory_context(query: str = "", wing: str = "") -> str:
     """
     Собирает контекст памяти для подстановки в AI-запрос.
@@ -317,14 +355,17 @@ def get_memory_context(query: str = "", wing: str = "") -> str:
 
     Итого: ~700-1200 токенов.
     """
-    if _sqlite_path():
+    if _sqlite_path() or os.getenv("ARGOS_MEMPALACE_INDEX_PATH", "").strip() or os.getenv("ARGOS_MEMPALACE_FACTS_PATH", "").strip():
         hits = search_memory(query, top_k=3, wing=wing)
         if not hits:
             return ""
         lines = ["## ARGOS MEMORY [Recovered — lexical matches]"]
         for hit in hits:
             snippet = hit["text"][:500].replace("\n", " ")
-            lines.append(f"  [{hit['wing']}/{hit['room']}] {snippet}")
+            provenance = ""
+            if hit.get("id"):
+                provenance = f" [{hit.get('origin', 'recovered')}:{hit['id']}; source={hit.get('source', '')}; date={hit.get('date', '')}; file={hit.get('source_file', '')}]"
+            lines.append(f"  [{hit['wing']}/{hit['room']}]{provenance} {snippet}")
         return "\n".join(lines)[:2400]
 
     parts: list[str] = []
@@ -360,6 +401,13 @@ def get_memory_context(query: str = "", wing: str = "") -> str:
 
 def status() -> str:
     """Быстрый статус palace для команды /memory в Telegram."""
+    if os.getenv("ARGOS_MEMPALACE_INDEX_PATH", "").strip() or os.getenv("ARGOS_MEMPALACE_FACTS_PATH", "").strip():
+        info = memory_status()
+        if not info["enabled"]:
+            return "⚫ MemPalace: отключён (ARGOS_MEMPALACE=0)"
+        index = info["index"]
+        return (f"🧠 MemPalace: index {index['status']} / {index.get('backend', 'unknown')}; "
+                f"Drawers: {index.get('count', 0)}; Facts: {info['facts'].get('count', 0)}")
     if _sqlite_path():
         if not _MEMPALACE_ENABLED:
             return "⚫ MemPalace: отключён (ARGOS_MEMPALACE=0)"

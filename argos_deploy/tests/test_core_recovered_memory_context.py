@@ -62,3 +62,11 @@ def test_unavailable_recovery_does_not_block_provider(monkeypatch):
         raise OSError("unavailable")
     monkeypatch.setattr(bridge, "get_memory_context", unavailable)
     assert _run_provider() == ("base context", "query")
+
+
+@pytest.mark.parametrize("setting", ["ARGOS_MEMPALACE_INDEX_PATH", "ARGOS_MEMPALACE_FACTS_PATH"])
+def test_index_or_new_facts_alone_reach_provider(monkeypatch, setting):
+    monkeypatch.delenv("ARGOS_MEMPALACE_SQLITE_PATH", raising=False)
+    monkeypatch.setenv(setting, "/synthetic/separate-memory.sqlite3")
+    monkeypatch.setattr(bridge, "get_memory_context", lambda query: "SYNTHETIC NEW FACT")
+    assert "SYNTHETIC NEW FACT" in _run_provider()[0]
