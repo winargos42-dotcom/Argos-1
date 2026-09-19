@@ -8,6 +8,8 @@ from __future__ import annotations
 import os
 import re
 import requests
+from src.ollama_input_policy import generate_payload, context_limit_message
+from src.execution_outcome import classify_execution
 from src.argos_logger import get_logger
 
 log = get_logger("argos.tool_calling")
@@ -69,10 +71,12 @@ class ArgosToolCallingEngine:
         try:
             resp = requests.post(
                 ollama_url,
-                json={"model": os.getenv("OLLAMA_MODEL", "poilopr57/Argoss"),
-                      "prompt": prompt, "stream": False},
+                json=generate_payload(os.getenv("OLLAMA_MODEL", "poilopr57/Argoss"), prompt),
                 timeout=ollama_timeout,
             )
+            overflow_message = context_limit_message(resp)
+            if overflow_message:
+                return {"error": "context_overflow", "message": overflow_message, "tool_calls": []}
             text = resp.json().get("response", "")
             import json as _json
             m = re.search(r"\{.*\}", text, re.DOTALL)
@@ -89,30 +93,39 @@ class ArgosToolCallingEngine:
         if admin is None:
             admin = getattr(self.core, "_internal_admin", None)
         try:
-            if name == "get_system_stats":
+            if name in ("get_system_stats", "get_stats"):
                 if admin and hasattr(admin, "get_stats"):
-                    return str(admin.get_stats())
+                    return self._tool_result(name, admin.get_stats())
                 try:
                     from src.connectivity.system_health import format_full_report
-                    return format_full_report()
+                    return self._tool_result(name, format_full_report())
                 except Exception:
                     return "stats unavailable"
             if name == "list_dir" and admin:
-                return str(admin.list_dir(arguments.get("path", ".")))
+                return self._tool_result(name, admin.list_dir(arguments.get("path", ".")))
             if name == "read_file" and admin:
-                return str(admin.read_file(arguments.get("path", "")))
+                return self._tool_result(name, admin.read_file(arguments.get("path", "")))
             if name == "create_file" and admin:
-                return str(admin.create_file(
+                return self._tool_result(name, admin.create_file(
                     arguments.get("path", "new.txt"),
                     arguments.get("content", ""),
                 ))
             if name == "delete_item" and admin:
-                return str(admin.delete_item(arguments.get("path", "")))
+                return self._tool_result(name, admin.delete_item(arguments.get("path", "")))
             if name == "run_cmd" and admin:
-                return str(admin.run_cmd(arguments.get("cmd", ""), user="planner"))
+                return self._tool_result(name, admin.run_cmd(arguments.get("cmd", ""), user="planner"))
             return f"[Tool {name}: not implemented]"
         except Exception as e:
             return f"[Tool {name} error: {e}]"
+
+    @staticmethod
+    def _tool_result(name: str, result: object) -> str:
+        answer, status = classify_execution(result)
+        if not answer.strip():
+            return f"❌ Инструмент {name} не вернул подтверждения результата."
+        if status == "failed" and not answer.startswith("❌"):
+            return "❌ " + answer
+        return answer
 
     def _synthesize_answer(self, text: str, outputs: list) -> str:
         """Синтезирует ответ из результатов выполненных инструментов."""
@@ -384,8 +397,11 @@ class ArgosToolCallingEngine:
             plan = self._plan_calls(text, context_text=ctx, previous_outputs=outputs)
             if plan is None:
                 break
-            if plan.get("confidence", 0) >= 0.8 and plan.get("final_answer"):
-                return plan["final_answer"]
+            if plan.get("error") == "context_overflow":
+                message = plan["message"]
+                if outputs:
+                    return self._synthesize_answer(text, outputs) + "\n" + message
+                return message
             tool_calls = plan.get("tool_calls") or []
             new_calls = False
             for call in tool_calls:

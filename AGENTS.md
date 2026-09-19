@@ -4132,3 +4132,7 @@ After each task return:
 - Изменено: deployment core/Memory bridge, SQLite/prompt tests, validate.yml, session_summary.md, 02 Logs/2026-09-19_LocalRefinement.md.
 - Проверка: 191 helper + 79 runtime/Ollama + 22 root tests = 292 passed, 2 subtests; independent review PASS. Синтетический стабильный префикс 671→2308 символов; полный release coverage gate сохранён.
 - Runtime: окно Ollama 4096 после обнаруженного усечения3277/2297→1026 приctx2048; таймауты600/660s. Реальный prompt2259 принят целиком. Параметры, измерения и откат сохраняются отдельно в /root/argos-runtime/refinement-manifest.json.
+
+## Session — 2026-09-19 Core correctness
+
+User approved execution of the development roadmap. First bounded iteration adds deterministic arithmetic, literal file command handling, explicit execution outcomes, honest agent/planner reports, and truncate:false for the main Ollama HTTP path. Memory backups and cloud state are preserved. See `02 Logs/2026-09-19_CoreCorrectness.md` for proof, local rollout and remaining limits. Exact generation reserve and the existing 30% application coverage gate remain follow-up work; do not claim the full roadmap or release is complete.

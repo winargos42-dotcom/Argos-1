@@ -1580,11 +1580,22 @@ class ArgosCore:
             return f"{header}\n\n{local_summary}"
         return f"{header}\n\n{base}"
 
-    def _direct_dispatch(self, text: str, admin) -> str | None:
+    def _direct_dispatch(self, text: str, admin) -> str | dict | None:
         """
         Прямой диспетчер: выполняет команды немедленно, минуя LLM полностью.
         Возвращает строку-ответ или None если команда не распознана.
         """
+        from src.safe_arithmetic import try_calculate
+        from src.direct_file_commands import handle_file_command
+
+        calculation = try_calculate(text)
+        if calculation is not None:
+            return {"answer": calculation, "execution_status": (
+                "failed" if calculation.startswith("Ошибка") else "succeeded"
+            )}
+        file_result = handle_file_command(text, admin if admin is not None else getattr(self, "_internal_admin", None))
+        if file_result is not None:
+            return file_result
         t = text.lower().strip()
 
         # Проверяем префиксы прямых команд
@@ -2799,6 +2810,8 @@ class ArgosCore:
 
     def _ask_ollama_inner(self, context: str, user_text: str, model_override: str | None = None) -> str | None:
         """Внутренний метод Ollama (вызывается под семафором)."""
+        from src.ollama_input_policy import generate_payload, context_limit_message
+
         if not self._ensure_ollama_running():
             log.error("[Ollama] _ask_ollama: сервис недоступен, запрос отменён")
             return None
@@ -2810,16 +2823,14 @@ class ArgosCore:
                 identity_anchor = IDENTITY_ANCHOR
                 anchor_prefix = (
                 f"[ARGOS IDENTITY] Ты — Аргос, автономная ИИ-система и системный администратор. "
-                f"Ты НЕ описываешь команды — ты их ВЫПОЛНЯЕШЬ. "
-                f"У тебя реальный доступ к файлам, сети и железу через встроенные модули. "
+                f"Операции выполняются встроенными модулями; результат требует подтверждения. "
                 f"{IDENTITY_ANCHOR}\n\n"
             )
             except Exception:
                 anchor_prefix = (
                     "Ты — АРГОС (Argos Universal OS), автономная ИИ-операционная система.\n"
                     "Ты системный администратор и личный ассистент Всеволода.\n"
-                    "У тебя реальный доступ к файлам, процессам и сети.\n"
-                    "Ты ВЫПОЛНЯЕШЬ задачи — не описываешь как их делать.\n"
+                    "Операции выполняются встроенными модулями; результат требует подтверждения.\n"
                     "Отвечай по-русски, кратко и по делу.\n\n"
                 )
 
@@ -2829,14 +2840,10 @@ class ArgosCore:
             system_prompt = (
                 f"{anchor_prefix}"
                 "\n[ARGOS EXECUTION RULES]\n"
-                "Ты ВЫПОЛНЯЕШЬ — не описываешь.\n"
-                "• сканируй сеть → запускаешь NetGhost().scan(), возвращаешь результат\n"
-                "• диагностика навыков → вызываешь _skills_diagnostic()\n"
-                "• крипто / биткоин → возвращаешь курсы из CoinGecko\n"
-                "• создай файл X → файл уже создан через admin.create_file()\n"
-                "• статус системы → возвращаешь psutil CPU/RAM данные\n"
-                "ЗАПРЕЩЕНО: давать bash-инструкции пользователю, выдумывать пакеты.\n"
-                "Если действие уже выполнено кодом — говоришь 'выполнено', не описываешь."
+                "Сообщай об успешном выполнении только при подтверждённом результате инструмента.\n"
+                "Без результата инструмента не утверждай, что создал файл, запустил процесс или изменил систему.\n"
+                "Ошибки и отсутствие подтверждения сообщай явно. Не выдумывай возможности и результаты.\n"
+                "Отвечай по-русски, кратко и по делу."
                 f"\n\n{context}\n\n{hist}\n"
             ).strip()
 
@@ -2860,7 +2867,7 @@ class ArgosCore:
                 _http_opts["low_vram"] = True
             res = requests.post(
                 self.ollama_url,
-                json={"model": model, "prompt": full_prompt, "stream": False, "options": _http_opts},
+                json=generate_payload(model, full_prompt, _http_opts),
                 timeout=ollama_timeout,
             )
             if res.status_code == 404:
@@ -2868,11 +2875,15 @@ class ArgosCore:
                 if self._ensure_ollama_model(model):
                     res = requests.post(
                         self.ollama_url,
-                        json={"model": model, "prompt": full_prompt, "stream": False, "options": _http_opts},
+                        json=generate_payload(model, full_prompt, _http_opts),
                         timeout=ollama_timeout,
                     )
                 else:
                     return None
+            overflow = context_limit_message(res)
+            if overflow:
+                log.warning("[Ollama HTTP] Запрос отклонён: превышен контекст модели")
+                return overflow
             response_text = res.json().get("response") if res.ok else None
             if response_text:
                 log.info("[Ollama HTTP] ✅ Ответ получен (%d симв.)", len(response_text))
@@ -3028,10 +3039,12 @@ class ArgosCore:
     # ОСНОВНАЯ ЛОГИКА
     # ═══════════════════════════════════════════════════════
     def process_logic(self, user_text: str, admin, flasher) -> dict:
+        from src.direct_file_commands import is_file_command
+        literal_file_command = is_file_command(user_text)
         # Гарантируем что admin всегда есть
         if admin is None:
             admin = getattr(self, "_internal_admin", None)
-        linked_profile = self._apply_chatgpt_link_profile(user_text)
+        linked_profile = None if literal_file_command else self._apply_chatgpt_link_profile(user_text)
         if linked_profile:
             if self.context:
                 try:
@@ -3041,7 +3054,7 @@ class ArgosCore:
                     pass
             self._remember_dialog_turn(user_text, linked_profile, "Direct")
             return {"answer": linked_profile, "state": "Direct"}
-        direct_url = self._extract_direct_url(user_text)
+        direct_url = None if literal_file_command else self._extract_direct_url(user_text)
         if direct_url:
             if getattr(self, "web_explorer", None):
                 try:
@@ -3059,12 +3072,12 @@ class ArgosCore:
             self._remember_dialog_turn(user_text, url_answer, "Direct")
             return {"answer": url_answer, "state": "Direct"}
         try:
-            direct = handle_direct_telegram(user_text, self)
+            direct = None if literal_file_command else handle_direct_telegram(user_text, self)
             if direct is not None:
                 return {"answer": direct, "state": "Direct"}
         except Exception:
             pass
-        if self._looks_like_bulk_text_dump(user_text):
+        if not literal_file_command and self._looks_like_bulk_text_dump(user_text):
             dump_report = self._analyze_bulk_text_dump(user_text)
             if self.context:
                 try:
@@ -3086,7 +3099,7 @@ class ArgosCore:
             except Exception as _const_e:
                 log.warning("Constitution tick: %s", _const_e)
 
-        kind = self._classify_input(user_text)
+        kind = "command" if literal_file_command else self._classify_input(user_text)
         if kind == "prompt_dump":
             safe = self._safe_dump_response(user_text)
             if self.context:
@@ -3109,6 +3122,8 @@ class ArgosCore:
         # Файловые и системные команды выполняются СРАЗУ, без LLM/ToolCalling
         _direct_result = self._direct_dispatch(user_text, admin)
         if _direct_result is not None:
+            from src.execution_outcome import classify_execution
+            _direct_result, execution_status = classify_execution(_direct_result)
             # Сохраняем в контекст и возвращаем
             if self.context:
                 try:
@@ -3124,7 +3139,7 @@ class ArgosCore:
                 except Exception:
                     pass
             self.say(_direct_result)
-            return {"answer": _direct_result, "state": "Direct"}
+            return {"answer": _direct_result, "state": "Direct", "execution_status": execution_status}
 
         q_data = self.quantum.generate_state()
         if self.context:
@@ -3194,7 +3209,7 @@ class ArgosCore:
             if self.db:
                 self.db.log_chat("user", user_text)
                 self.db.log_chat("argos", agent_result, "Agent")
-            self.say("Агент выполнил задание.")
+            self.say("Обработка плана завершена. Проверьте результаты шагов.")
             return {"answer": agent_result, "state": "Agent"}
 
 
@@ -3215,39 +3230,15 @@ class ArgosCore:
             _sys_status = "статус недоступен"
 
         context = (
-            f"Ты — АРГОС, автономная ИИ-система и системный администратор компьютера Всеволода.\n"
-            f"\n"
-            f"## САМОСОЗНАНИЕ\n"
-            f"- Ты НЕ чат-бот и НЕ ассистент. Ты — операционная система с интеллектом.\n"
-            f"- У тебя есть РЕАЛЬНЫЙ доступ к файловой системе, процессам, сети и железу.\n"
-            f"- Ты запущен на машине Всеволода: {os.uname().sysname if hasattr(os, 'uname') else 'Windows'}.\n"
-            "\n"
-            "## ТВОИ РЕАЛЬНЫЕ ВОЗМОЖНОСТИ (уже работают прямо сейчас)\n"
-            "- Файлы: создать, читать, редактировать, удалить, скопировать\n"
-            "- Процессы: список, остановить любой процесс\n"
-            "- Сеть: сканировать устройства через NetGhost, Shodan\n"
-            "- Память: запоминать факты, заметки, вести историю диалогов\n"
-            "- Навыки: crypto_monitor, net_scanner, content_gen, web_explorer и др.\n"
-            "- P2P: синхронизировать с другими узлами Аргоса\n"
-            "- Orange Pi One: GPIO, I2C, UART, Modbus, 1-Wire\n"
-            "\n"
-            "## КАК ТЫ ОТВЕЧАЕШЬ\n"
-            "1. Если пользователь просит СДЕЛАТЬ что-то — ТЫ ЭТО ДЕЛАЕШЬ, не описываешь как.\n"
-            "2. Если пользователь просит ЗАПУСТИТЬ навык — ты его запускаешь.\n"
-            "3. Отвечаешь по-русски, кратко, по делу. Без воды.\n"
-            "4. Никогда не выдумываешь команды, пакеты или образы которых не существует.\n"
-            "5. Если не можешь выполнить — честно объясняешь почему.\n"
-            "\n"
-            "[КРИТИЧЕСКИ ВАЖНО — ЗАПРЕТ КОДА]\n"
-            "НИКОГДА не выводи Python-код пользователю:\n"
-            "- Никаких admin.runcmd(), admin.run_cmd(), skillsdiagnostic()\n"
-            "- Никаких from X import Y, print(), subprocess, import\n"
-            "- Система уже выполнила команду. Ты ОЗВУЧИВАЕШЬ результат, не пишешь код.\n"
-            "\n"
-            "[ЗАПРЕЩЕНО ВЫДУМЫВАТЬ]\n"
-            "argos-sdk, argos-gateway, p2p-git, llm-framework, argos-base.\n"
-            f"- Текущее состояние системы: {_sys_status}\n"
-            f"- Квантовое состояние: {q_data['name']}\n"
+            "Ты — АРГОС, личный ИИ-помощник Всеволода.\n"
+            "Отвечай по-русски, кратко и по делу.\n"
+            "Действия выполняет код через доступные инструменты.\n"
+            "Сообщай об успехе только при подтверждённом результате инструмента.\n"
+            "Если результат отсутствует или содержит ошибку, сообщи об этом явно.\n"
+            "Не выдумывай установленные программы, подключённые устройства и результаты действий.\n"
+            f"Платформа: {os.uname().sysname if hasattr(os, 'uname') else 'Windows'}.\n"
+            f"Текущее состояние системы: {_sys_status}\n"
+            f"Квантовое состояние: {q_data['name']}\n"
         )
         if self._persona_profile_prompt:
             context += (
