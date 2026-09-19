@@ -2804,8 +2804,10 @@ class ArgosCore:
             return None
         try:
             # ── Identity Anchor ───────────────────────────────
+            identity_anchor = ""
             try:
                 from src.context_manager import IDENTITY_ANCHOR
+                identity_anchor = IDENTITY_ANCHOR
                 anchor_prefix = (
                 f"[ARGOS IDENTITY] Ты — Аргос, автономная ИИ-система и системный администратор. "
                 f"Ты НЕ описываешь команды — ты их ВЫПОЛНЯЕШЬ. "
@@ -2822,8 +2824,10 @@ class ArgosCore:
                 )
 
             hist = self.context.get_prompt_context()
+            if identity_anchor and hist.startswith(f"[SYSTEM] {identity_anchor}"):
+                hist = hist.removeprefix(f"[SYSTEM] {identity_anchor}").lstrip("\n")
             system_prompt = (
-                f"{anchor_prefix}{context}\n\n{hist}\n"
+                f"{anchor_prefix}"
                 "\n[ARGOS EXECUTION RULES]\n"
                 "Ты ВЫПОЛНЯЕШЬ — не описываешь.\n"
                 "• сканируй сеть → запускаешь NetGhost().scan(), возвращаешь результат\n"
@@ -2833,6 +2837,7 @@ class ArgosCore:
                 "• статус системы → возвращаешь psutil CPU/RAM данные\n"
                 "ЗАПРЕЩЕНО: давать bash-инструкции пользователю, выдумывать пакеты.\n"
                 "Если действие уже выполнено кодом — говоришь 'выполнено', не описываешь."
+                f"\n\n{context}\n\n{hist}\n"
             ).strip()
 
             # Основная модель — личный помощник poilopr57/Argoss
@@ -3216,8 +3221,6 @@ class ArgosCore:
             f"- Ты НЕ чат-бот и НЕ ассистент. Ты — операционная система с интеллектом.\n"
             f"- У тебя есть РЕАЛЬНЫЙ доступ к файловой системе, процессам, сети и железу.\n"
             f"- Ты запущен на машине Всеволода: {os.uname().sysname if hasattr(os, 'uname') else 'Windows'}.\n"
-            f"- Текущее состояние системы: {_sys_status}\n"
-            f"- Квантовое состояние: {q_data['name']}\n"
             "\n"
             "## ТВОИ РЕАЛЬНЫЕ ВОЗМОЖНОСТИ (уже работают прямо сейчас)\n"
             "- Файлы: создать, читать, редактировать, удалить, скопировать\n"
@@ -3242,7 +3245,9 @@ class ArgosCore:
             "- Система уже выполнила команду. Ты ОЗВУЧИВАЕШЬ результат, не пишешь код.\n"
             "\n"
             "[ЗАПРЕЩЕНО ВЫДУМЫВАТЬ]\n"
-            "argos-sdk, argos-gateway, p2p-git, llm-framework, argos-base."
+            "argos-sdk, argos-gateway, p2p-git, llm-framework, argos-base.\n"
+            f"- Текущее состояние системы: {_sys_status}\n"
+            f"- Квантовое состояние: {q_data['name']}\n"
         )
         if self._persona_profile_prompt:
             context += (

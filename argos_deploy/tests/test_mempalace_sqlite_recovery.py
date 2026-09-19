@@ -32,6 +32,38 @@ def test_unicode_lexical_ranking_and_wing_filter(palace):
     assert hits[0]["score"] == 1.0
 
 
+@pytest.mark.parametrize("name", ["ARGOS", "АРГОС"])
+def test_repeated_words_preserve_specific_search_terms(palace, name):
+    with sqlite3.connect(palace) as db:
+        db.executemany("INSERT INTO drawers VALUES(?,?,?,?)", [
+            ("general", f"{name} tea", "repeat", "general"),
+            ("specific", f"{name} Railway", "repeat", "specific"),
+        ])
+    ordinary = bridge.search_memory(f"{name} Railway", top_k=1, wing="repeat")
+    repeated = bridge.search_memory(f"{name.lower()} " * 12 + "Railway", top_k=1, wing="repeat")
+    assert ordinary[0]["room"] == "specific"
+    assert repeated == ordinary
+
+
+def test_search_uses_first_twelve_unique_words_in_order(palace):
+    with sqlite3.connect(palace) as db:
+        db.executemany("INSERT INTO drawers VALUES(?,?,?,?)", [
+            ("twelfth", "mu", "limit", "included"),
+            ("thirteenth", "nu", "limit", "excluded"),
+        ])
+    query = "alpha " * 12 + "beta gamma delta epsilon zeta eta theta iota kappa lambda mu nu"
+    hits = bridge.search_memory(query, wing="limit")
+    assert len(hits) == 1
+    assert hits[0]["room"] == "included"
+    assert hits[0]["score"] == 0.0833
+
+
+def test_search_ignores_words_after_first_512_characters(palace):
+    with sqlite3.connect(palace) as db:
+        db.execute("INSERT INTO drawers VALUES(?,?,?,?)", ("late", "Railway", "limit", "late"))
+    assert bridge.search_memory("ARGOS " + " " * 506 + "Railway", wing="limit") == []
+
+
 @pytest.mark.parametrize("query", ["неизвестно", "", "%_", "' OR 1=1 --"])
 def test_no_match_returns_no_memories(palace, query):
     assert bridge.search_memory(query) == []

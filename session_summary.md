@@ -1,3 +1,9 @@
+# Current session — Local refinement, 2026-09-19
+
+Worktree `/root/argos-improve` builds on the exact PR #14 recovery tree; `/root/argos-recovery` files preserved. MemPalace now limits unique terms after deduplication. Ollama retains a single generated identity anchor and places fixed rules before current status/history, preserving all unique context. Tests: helpers191 + runtime/Ollama79 + root22 =292, plus2subtests; independent review PASS. Runtime files updated with rollback copies in `/root/argos-runtime/backups/refinement-20260919T222128Z`; post-restart health ready=true. Observed Ollama truncation at2048; local model/server context now4096, provider/controller timeouts600/660s, input2259 accepted whole. See `02 Logs/2026-09-19_LocalRefinement.md` for runtime measurements and final delivery evidence. Existing release coverage and cloud-access gaps remain.
+
+---
+
 # Current session — Linux recovery, 2026-09-19
 
 Runtime /root/argos-runtime; source /root/argos-recovery. User services argos-local/argos-ollama enabled, linger=yes. Model argos-local (qwen2.5:1.5b, context2048/output128); loopback ports8080/11434. Authenticated end-to-end core query returned4; first long-context reply can take minutes on this CPU. Verified backups /root/argos-recovery-artifacts; 92918 MemPalace drawers with separate readonly runtime copy.
