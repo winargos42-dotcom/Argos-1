@@ -86,15 +86,12 @@ def _best_ip(peer: dict, p2p_port: int) -> str | None:
 
 class PeerAutoConnect:
     def __init__(self, bridge):
+        from src.connectivity.p2p_bridge import P2P_PORT
+
         self.bridge = bridge
         self._own_ips = _own_ips()
         self._peers = _load_peers()
-        self._p2p_port = 55771
-        try:
-            cfg = json.load(open(PEERS_CONFIG))
-            self._p2p_port = cfg.get("p2p_port", 55771)
-        except Exception:
-            pass
+        self._p2p_port = P2P_PORT
         self._failures: dict[str, int] = {}
         self._connected: set[str] = set()
         self._running = False

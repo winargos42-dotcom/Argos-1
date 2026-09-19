@@ -4119,3 +4119,10 @@ After each task return:
 - URL: http://localhost:18765
 
 ## Pi Shutdown вЂ” 2026-06-27 00:54
+
+## Session — 2026-09-19 Linux recovery
+- Action: Restored verified MemPalace/chat backups; configured loopback ARGOS/Ollama user services with linger; repaired P2P port and readonly SQLite memory context.
+- Изменено: deployment peer_autoconnect, mempalace_bridge, core, focused tests, validate workflow, Linux recovery log and session_summary.
+- Проверка: 184 helper tests + 2 subtests; 22 root and 69 runtime tests; independent review without blockers. Verified backup integrity and local MCP authorization.
+- Runtime: /root/argos-runtime; qwen2.5:1.5b; 92918 recovered drawers. Secrets and records outside Git.
+- Remaining: full release coverage, HF write access, Cloudflare OAuth, updated Railway deployment. See 02 Logs/2026-09-19_LinuxRecovery.md.
