@@ -1,3 +1,11 @@
+# Current session — Linux recovery, 2026-09-19
+
+Runtime /root/argos-runtime; source /root/argos-recovery. User services argos-local/argos-ollama enabled, linger=yes. Model argos-local (qwen2.5:1.5b, context2048/output128); loopback ports8080/11434. Authenticated end-to-end core query returned4; first long-context reply can take minutes on this CPU. Verified backups /root/argos-recovery-artifacts; 92918 MemPalace drawers with separate readonly runtime copy.
+
+Reviewed P2P, recovered memory context and platform fixes. Helper184 + 2 subtests, root22, runtime69. Release coverage unresolved. Cloudflare OAuth pending; HF read-only; Railway old Aug10 deployment. See 02 Logs/2026-09-19_LinuxRecovery.md.
+
+---
+
 # Session summary — 2026-09-18
 
 Latest published checkpoint: Gist and legacy recovery repair `69bafe4631e98ba83e6fccd0ab8b0b038e97aa19` is applied to main. Hosted Python 3.10 run `35336550117` succeeded; branch run `35336476602` proved 786 syntax checks and 190 selected tests. The current follow-up repairs Gemini/Hugging Face integration and records a recovered memory snapshot.

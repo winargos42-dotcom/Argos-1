@@ -18,8 +18,11 @@ from __future__ import annotations
 
 import logging
 import os
+import re
+import sqlite3
 import threading
 import time
+from contextlib import closing
 from pathlib import Path
 from typing import Optional
 
@@ -42,6 +45,54 @@ _mp_ok = False
 _chromadb_client = None
 _collection = None
 _init_lock = threading.Lock()
+
+
+def _sqlite_path() -> str:
+    return os.getenv("ARGOS_MEMPALACE_SQLITE_PATH", "").strip()
+
+
+def _sqlite_connection():
+    uri = Path(_sqlite_path()).resolve().as_uri() + "?mode=ro"
+    conn = sqlite3.connect(uri, uri=True, timeout=0.2)
+    deadline = time.monotonic() + 2.0
+    steps = 0
+
+    def budget():
+        nonlocal steps
+        steps += 1000
+        return int(steps > 10000000 or time.monotonic() > deadline)
+
+    conn.set_progress_handler(budget, 1000)
+    return conn
+
+
+def _sqlite_search(query: str, top_k: int, wing: str) -> list[dict]:
+    if not _MEMPALACE_ENABLED or top_k <= 0:
+        return []
+    terms = set(re.findall(r"[^\W_]+", query[:512].casefold())[:12])
+    if not terms:
+        return []
+
+    def lexical_score(document):
+        words = set(re.findall(r"[^\W_]+", (document or "").casefold()))
+        return len(terms & words) / len(terms)
+
+    try:
+        with closing(_sqlite_connection()) as conn:
+            conn.create_function("lexical_score", 1, lexical_score, deterministic=True)
+            rows = conn.execute(
+                "SELECT substr(document,1,4096), substr(wing,1,128), "
+                "substr(room,1,128), lexical_score(substr(document,1,4096)) AS score "
+                "FROM drawers WHERE (? = '' OR wing = ?) AND score > 0 "
+                "LIMIT 200",
+                (wing, wing),
+            ).fetchall()
+        rows.sort(key=lambda row: row[3], reverse=True)
+        return [{"text": doc, "wing": w or "", "room": room or "",
+                 "score": round(score, 4), "score_kind": "lexical"}
+                for doc, w, room, score in rows[:min(top_k, 10)]]
+    except (sqlite3.Error, OSError, ValueError):
+        return []
 
 
 def _ensure_init() -> bool:
@@ -177,6 +228,8 @@ def search_memory(query: str, top_k: int = 5, wing: str = "") -> list[dict]:
     Семантический поиск по всему palace.
     Возвращает список: [{"text": ..., "wing": ..., "room": ..., "score": ...}]
     """
+    if _sqlite_path():
+        return _sqlite_search(query, top_k, wing)
     if not _ensure_init():
         return []
     try:
@@ -223,6 +276,8 @@ def store_memory(
     room   — комната внутри крыла (произвольная строка)
     importance — 1-5, влияет на L1 приоритет
     """
+    if _sqlite_path():
+        return False
     if not _ensure_init():
         return False
     if not text or not text.strip():
@@ -261,6 +316,16 @@ def get_memory_context(query: str = "", wing: str = "") -> str:
 
     Итого: ~700-1200 токенов.
     """
+    if _sqlite_path():
+        hits = search_memory(query, top_k=3, wing=wing)
+        if not hits:
+            return ""
+        lines = ["## ARGOS MEMORY [Recovered — lexical matches]"]
+        for hit in hits:
+            snippet = hit["text"][:500].replace("\n", " ")
+            lines.append(f"  [{hit['wing']}/{hit['room']}] {snippet}")
+        return "\n".join(lines)[:2400]
+
     parts: list[str] = []
 
     # L0 — Identity (всегда)
@@ -294,6 +359,15 @@ def get_memory_context(query: str = "", wing: str = "") -> str:
 
 def status() -> str:
     """Быстрый статус palace для команды /memory в Telegram."""
+    if _sqlite_path():
+        if not _MEMPALACE_ENABLED:
+            return "⚫ MemPalace: отключён (ARGOS_MEMPALACE=0)"
+        try:
+            with closing(_sqlite_connection()) as conn:
+                count = conn.execute("SELECT COUNT(*) FROM drawers").fetchone()[0]
+            return f"🧠 MemPalace: SQLite read-only / lexical; Drawers: {count}"
+        except (sqlite3.Error, OSError, ValueError):
+            return "🔴 MemPalace: SQLite недоступен"
     if not _ensure_init():
         if not _MEMPALACE_ENABLED:
             return "⚫ MemPalace: отключён (ARGOS_MEMPALACE=0)"
