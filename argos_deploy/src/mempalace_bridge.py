@@ -69,7 +69,8 @@ def _sqlite_connection():
 def _sqlite_search(query: str, top_k: int, wing: str) -> list[dict]:
     if not _MEMPALACE_ENABLED or top_k <= 0:
         return []
-    terms = set(re.findall(r"[^\W_]+", query[:512].casefold())[:12])
+    words = dict.fromkeys(re.findall(r"[^\W_]+", query[:512].casefold()))
+    terms = set(list(words)[:12])
     if not terms:
         return []
 

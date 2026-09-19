@@ -4126,3 +4126,9 @@ After each task return:
 - Проверка: 184 helper tests + 2 subtests; 22 root and 69 runtime tests; independent review without blockers. Verified backup integrity and local MCP authorization.
 - Runtime: /root/argos-runtime; qwen2.5:1.5b; 92918 recovered drawers. Secrets and records outside Git.
 - Remaining: full release coverage, HF write access, Cloudflare OAuth, updated Railway deployment. See 02 Logs/2026-09-19_LinuxRecovery.md.
+
+## Session — 2026-09-19 Local refinement
+- Action: Исправлен поиск по повторяющимся словам; сокращён повторный identity-блок Ollama, постоянные инструкции перенесены перед динамическими данными.
+- Изменено: deployment core/Memory bridge, SQLite/prompt tests, validate.yml, session_summary.md, 02 Logs/2026-09-19_LocalRefinement.md.
+- Проверка: 191 helper + 79 runtime/Ollama + 22 root tests = 292 passed, 2 subtests; independent review PASS. Синтетический стабильный префикс 671→2308 символов; полный release coverage gate сохранён.
+- Runtime: окно Ollama 4096 после обнаруженного усечения3277/2297→1026 приctx2048; таймауты600/660s. Реальный prompt2259 принят целиком. Параметры, измерения и откат сохраняются отдельно в /root/argos-runtime/refinement-manifest.json.
