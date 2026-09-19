@@ -52,8 +52,8 @@ def test_anchor_once_and_unique_context_preserved():
 def test_static_rules_precede_dynamic_context():
     result = prompt(assembled_context())
     assert result.index("[ARGOS EXECUTION RULES]") < result.index("CPU 1%")
-    assert result.index("argos-sdk, argos-gateway") < result.index("CPU 1%")
-    assert result.index("argos-sdk, argos-gateway") < result.index("Квантовое состояние: Analytic")
+    assert result.index("Сообщай об успехе только при подтверждённом результате инструмента.") < result.index("CPU 1%")
+    assert result.index("Сообщай об успехе только при подтверждённом результате инструмента.") < result.index("Квантовое состояние: Analytic")
 
 
 def test_default_history_keeps_identity():
