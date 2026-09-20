@@ -345,16 +345,32 @@ def memory_status() -> dict:
             "facts": index_status(facts) if facts else {"status": "not_configured"}}
 
 
+_CONTEXT_STOPWORDS = frozenset((
+    "а и или но в во на за из к ко о об от по с со у до для при без не ни "
+    "это этот эта эти то что кто где когда почему зачем как какой какая какие "
+    "ли же бы я ты вы мы он она они мне меня мой моя мое мои пожалуйста "
+    "ответь отвечай расскажи объясни кратко коротко подробно одним одной одно "
+    "коротким короткой кратким краткой предложением предложении предложениях "
+    "словом словами русском русски языке "
+    "a an the and or in on at to of for is are was why what how please "
+    "answer respond briefly short concise sentence sentences one"
+).split())
+
+
 def get_memory_context(query: str = "", wing: str = "") -> str:
     """
     Собирает контекст памяти для подстановки в AI-запрос.
 
-    L0 всегда + L1 всегда.
-    Если query задан → L3 deep search (топ-3 релевантных).
-    Если wing задан → L2 on-demand.
+    Запрос без предметных слов не добавляет память.
+    Для SQLite используются топ-3 лексических совпадения предметных слов.
+    Для ChromaDB добавляются L0/L1, L2 по wing и L3 по предметному запросу.
 
     Итого: ~700-1200 токенов.
     """
+    terms = list(dict.fromkeys(re.findall(r"[^\W_]+", query[:512].casefold())))
+    query = " ".join(term for term in terms if term not in _CONTEXT_STOPWORDS)
+    if not query:
+        return ""
     if _sqlite_path() or os.getenv("ARGOS_MEMPALACE_INDEX_PATH", "").strip() or os.getenv("ARGOS_MEMPALACE_FACTS_PATH", "").strip():
         hits = search_memory(query, top_k=3, wing=wing)
         if not hits:
