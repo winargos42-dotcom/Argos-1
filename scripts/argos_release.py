@@ -192,12 +192,17 @@ def restore(receipt):
             data = backup.read_bytes()
             if digest(data) != item["old_sha256"]:
                 raise ReleaseError("Backup checksum mismatch")
-        prepared.append((target, data, item["mode"]))
-    for target, data, mode in prepared:
+        prepared.append((item, data))
+    for item, data in prepared:
+        target = safe_path(Path(receipt["runtime"]), allowed_path(item["path"]))
+        if str(target) != item["runtime_path"]:
+            raise ReleaseError("Invalid receipt path")
+        if current_hash(target) != item["new_sha256"]:
+            raise ReleaseError("Runtime drift prevents rollback")
         if data is None:
             target.unlink()
         else:
-            atomic_write(target, data, mode)
+            atomic_write(target, data, item["mode"])
 
 
 def rollback(receipt_path):

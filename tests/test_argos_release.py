@@ -150,3 +150,49 @@ def test_apply_failure_restores_previous_files(project, monkeypatch):
         release.apply(output)
     assert (runtime / "src/a.py").read_text() == "old\n"
     assert not (runtime / "src/new.py").exists()
+
+
+@pytest.mark.parametrize("previous_second", [None, b"old second"])
+@pytest.mark.parametrize("drift", ["content", "symlink"])
+def test_rollback_rechecks_each_file_after_previous_restore(tmp_path, monkeypatch, previous_second, drift):
+    runtime = tmp_path / "runtime"
+    (runtime / "src").mkdir(parents=True)
+    first = runtime / "src/a.py"
+    second = runtime / "src/b.py"
+    outside = tmp_path / "local-edit.py"
+    outside.write_bytes(b"local user edit")
+    records = []
+    for number, target, before, after in [
+        (0, first, b"old first", b"new first"),
+        (1, second, previous_second, b"new second"),
+    ]:
+        target.write_bytes(after)
+        backup = tmp_path / f"{number}.bak"
+        if before is not None:
+            backup.write_bytes(before)
+        records.append({
+            "path": f"argos_deploy/src/{target.name}",
+            "runtime_path": str(target),
+            "old_sha256": release.digest(before) if before is not None else None,
+            "new_sha256": release.digest(after),
+            "backup": str(backup) if before is not None else None,
+            "mode": 0o644,
+        })
+    original = release.atomic_write
+
+    def restore_then_edit(path, data, mode=0o644):
+        original(path, data, mode)
+        if Path(path) == first:
+            if drift == "content":
+                second.write_bytes(b"local user edit")
+            else:
+                second.unlink()
+                second.symlink_to(outside)
+
+    monkeypatch.setattr(release, "atomic_write", restore_then_edit)
+    with pytest.raises(release.ReleaseError, match="drift|Symlink"):
+        release.restore({"runtime": str(runtime), "files": records})
+    assert first.read_bytes() == b"old first"
+    assert second.read_bytes() == b"local user edit"
+    assert second.is_symlink() == (drift == "symlink")
+    assert outside.read_bytes() == b"local user edit"

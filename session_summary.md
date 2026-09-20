@@ -1,6 +1,6 @@
 # Session — 2026-09-19 Roadmap continuation
 
-User requests all remaining stages autonomously. Implemented whole-memory index, separate facts, durable queue, streaming/cancellation, authenticated Russian /ui, shared MCP execution, and hash-checked local release/rollback utility. Browser desktop/mobile and focused tests passed; final whole-application coverage and local installation in progress. See `02 Logs/2026-09-19_RoadmapCompletion.md` and `docs/ARGOS_LOCAL_OPERATOR.md`. Cloudflare OAuth expired without owner callback; domain404, Railway still old version, target boards absent. Do not claim full completion.
+User requests all remaining stages autonomously. Implemented whole-memory index, separate facts, durable queue, streaming/cancellation, authenticated Russian /ui, shared MCP execution, and hash-checked local release/rollback utility. Browser desktop/mobile and focused tests passed; whole-application coverage30.5674% (1418passed/22skipped), root51passed; local b2ff627 installed and live API/browser passed; basic model factual answer failed and is under diagnosis. See `02 Logs/2026-09-19_RoadmapCompletion.md` and `docs/ARGOS_LOCAL_OPERATOR.md`. Cloudflare OAuth expired without owner callback; domain404, Railway still old version, target boards absent. Do not claim full completion.
 
 # Session — 2026-09-19 Core correctness
 
