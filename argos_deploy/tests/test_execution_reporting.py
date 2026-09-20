@@ -9,6 +9,7 @@ from src.tool_calling import ArgosToolCallingEngine
 
 @pytest.mark.parametrize("result,status", [
     (None, "failed"), ("", "failed"), ("Ошибка создания файла: denied", "failed"),
+    ("Запрос не обработан: превышен допустимый объём контекста модели.", "failed"),
     ("❌ Не найден", "failed"), ("✅ Готово", "unverified"),
     ({"answer": "Готово", "state": "Direct"}, "unverified"),
     ({"answer": "Готово", "execution_status": "succeeded"}, "succeeded"),

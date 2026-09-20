@@ -138,6 +138,7 @@ class _GeminiKeyPool:
         with self._lock:
             dq = self._timestamps[idx]
             now = time.time()
+            dq.clear()
             # заполняем очередь «до отказа»
             while len(dq) < self.MAX_RPM:
                 dq.append(now)

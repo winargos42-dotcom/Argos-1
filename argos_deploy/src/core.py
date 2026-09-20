@@ -2772,6 +2772,11 @@ class ArgosCore:
         Семафор: только 1 запрос одновременно чтобы планировщик и Telegram не блокировали друг друга.
         Роутинг: простые запросы → RX 560 (phi3:mini, порт 11435).
         """
+        from src.task_control import current_control, checkpoint
+        checkpoint()
+        if current_control() is not None:
+            model_override = model_override or os.getenv("OLLAMA_MODEL", "poilopr57/Argoss")
+
         # Микро-запросы → Vega 11 (tinyllama), не трогаем RX 580 и RX 560
         _is_micro = getattr(self, "_is_micro_query", None)
         if not model_override and _is_micro and _is_micro(user_text):
@@ -2865,6 +2870,10 @@ class ArgosCore:
             _http_low_vram = os.getenv("OLLAMA_LOW_VRAM", "false").lower()
             if _http_low_vram in ("1", "true", "on", "yes"):
                 _http_opts["low_vram"] = True
+            from src.task_control import current_control, stream_generate, checkpoint
+            checkpoint()
+            if current_control() is not None:
+                return stream_generate(self.ollama_url, generate_payload(model, full_prompt, _http_opts), ollama_timeout)
             res = requests.post(
                 self.ollama_url,
                 json=generate_payload(model, full_prompt, _http_opts),
@@ -3039,6 +3048,8 @@ class ArgosCore:
     # ОСНОВНАЯ ЛОГИКА
     # ═══════════════════════════════════════════════════════
     def process_logic(self, user_text: str, admin, flasher) -> dict:
+        from src.task_control import checkpoint
+        checkpoint()
         from src.direct_file_commands import is_file_command
         literal_file_command = is_file_command(user_text)
         # Гарантируем что admin всегда есть
@@ -3254,7 +3265,9 @@ class ArgosCore:
             if rag_ctx:
                 context += f"\n\n{rag_ctx}"
 
-        if os.getenv("ARGOS_MEMPALACE_SQLITE_PATH", "").strip():
+        if any(os.getenv(name, "").strip() for name in (
+            "ARGOS_MEMPALACE_SQLITE_PATH", "ARGOS_MEMPALACE_INDEX_PATH", "ARGOS_MEMPALACE_FACTS_PATH"
+        )):
             try:
                 from src.mempalace_bridge import get_memory_context
 

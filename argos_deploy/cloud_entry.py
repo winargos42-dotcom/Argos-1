@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import os
 import time
+import asyncio
+from contextlib import asynccontextmanager
 from pathlib import Path
 from threading import Thread
 
@@ -17,6 +19,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from src.cloud_auth import CloudBearerAuthMiddleware
+from src.control_api import panel_response
 
 _boot_time = time.time()
 _ready = False
@@ -34,8 +37,16 @@ def _report_codex_status() -> None:
 
 _report_codex_status()
 
+
+@asynccontextmanager
+async def lifespan(application):
+    yield
+    runner = getattr(application.state, "task_runner", None)
+    if runner is not None:
+        await asyncio.to_thread(runner.close)
+
 # Lightweight app -- no heavy imports here
-app = FastAPI(title="Argos Cloud", version="2.1.3")
+app = FastAPI(title="Argos Cloud", version="2.1.3", lifespan=lifespan)
 app.add_middleware(CloudBearerAuthMiddleware)
 app.add_middleware(
     CORSMiddleware,
@@ -58,6 +69,9 @@ def health():
 @app.get("/")
 def root():
     return {"service": "argos-core", "ready": _ready}
+
+
+app.add_api_route("/ui", panel_response, methods=["GET"], include_in_schema=False)
 
 
 def _init_orchestrator():
@@ -98,6 +112,14 @@ def _init_orchestrator():
         )
 
         mcp = ArgosMCPServer(core=core, admin=admin)
+        from src.control_api import create_control_router
+        from src.task_runtime import TaskRunner
+
+        task_path = os.getenv("ARGOS_TASK_DB_PATH", str(state_root / "tasks.sqlite3"))
+        runner = TaskRunner(task_path, lambda text: core.process_logic(text, admin, None))
+        mcp.task_runner = runner
+        app.state.task_runner = runner
+        app.include_router(create_control_router(runner, lambda: {**mcp._status(), "ready": _ready}))
         # Mount at the application root so the MCP server's own /mcp route
         # is exposed publicly as /mcp rather than the accidental /mcp/mcp.
         # /health and / are declared above and therefore keep precedence.

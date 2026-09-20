@@ -226,8 +226,20 @@ class KNXBridge:
                 async def _write():
                     sw = Switch(self._xknx, "sw", group_address=group_address)
                     await self._xknx.start()
-                    await sw.set_on() if value else await sw.set_off()
-                    await self._xknx.stop()
+                    try:
+                        await sw.set_on() if value else await sw.set_off()
+                    finally:
+                        await self._xknx.stop()
+
+                try:
+                    asyncio.get_running_loop()
+                except RuntimeError:
+                    asyncio.run(_write())
+                else:
+                    import concurrent.futures
+
+                    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+                        executor.submit(lambda: asyncio.run(_write())).result()
 
                 return f"✅ KNX {group_address} = {value}"
             except Exception as e:

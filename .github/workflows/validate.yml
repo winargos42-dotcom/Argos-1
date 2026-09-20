@@ -17,7 +17,7 @@ jobs:
         with:
           python-version: "3.10"
       - name: Install dependencies
-        run: pip install pytest requests psutil fastapi httpx uvicorn python-dotenv redis
+        run: pip install pytest pytest-cov requests psutil fastapi httpx uvicorn python-dotenv redis
       - name: Validate Python syntax
         run: python3 scripts/check_python_syntax.py
       - name: Validate project
@@ -39,6 +39,9 @@ jobs:
           tests/test_safe_arithmetic.py tests/test_ollama_input_policy.py
           tests/test_core_direct_results.py tests/test_direct_file_commands.py
           tests/test_core_ollama_input_guard.py tests/test_execution_reporting.py
+          tests/test_memory_index.py tests/test_task_control.py tests/test_task_runtime.py
+          tests/test_task_runtime_edges.py tests/test_control_api.py tests/test_control_integration.py
+          tests/test_golden_application.py
           -q -o addopts=''
       - name: Test deployed runtime modules with isolated fixtures
         working-directory: argos_deploy

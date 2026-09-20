@@ -20,6 +20,7 @@ from typing import Any, Callable, Dict, List, Optional
 from src.argos_logger import get_logger
 from src.agent_guard import AgentGuard
 from src.execution_outcome import classify_execution
+from src.task_control import TaskCancelled
 
 log = get_logger("argos.agent")
 
@@ -228,6 +229,9 @@ class ArgosAgent:
                 icon = {"succeeded": "✅", "failed": "❌", "unverified": "❔"}[status]
                 results.append(f"   {icon} {answer or 'Результат отсутствует'}")
                 self._results.append({"step": step, "result": answer, "ok": status == "succeeded", "status": status})
+            except TaskCancelled:
+                self._running = False
+                raise
             except Exception as e:
                 err = str(e)
                 results.append(f"   ❌ Ошибка: {err}")

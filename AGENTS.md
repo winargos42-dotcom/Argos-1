@@ -4136,3 +4136,8 @@ After each task return:
 ## Session — 2026-09-19 Core correctness
 
 User approved execution of the development roadmap. First bounded iteration adds deterministic arithmetic, literal file command handling, explicit execution outcomes, honest agent/planner reports, and truncate:false for the main Ollama HTTP path. Memory backups and cloud state are preserved. See `02 Logs/2026-09-19_CoreCorrectness.md` for proof, local rollout and remaining limits. Exact generation reserve and the existing 30% application coverage gate remain follow-up work; do not claim the full roadmap or release is complete.
+
+## Session — 2026-09-19 Roadmap continuation
+- Action: implemented indexed memory, separate facts, durable tasks, streaming/cancellation, Russian authenticated panel and verified source installation/rollback.
+- Изменено: deployed core integration, memory/task/control modules, UI, focused tests, release utility, operator guide and roadmap log.
+- Проверка: browser desktop/mobile PASS; API/auth36, focused integration39, task/stream29 and release17 PASS (overlapping suites). Whole-source coverage and live delivery pending; cloud login/domain/devices remain externally blocked.
