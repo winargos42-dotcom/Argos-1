@@ -58,3 +58,22 @@ def test_static_rules_precede_dynamic_context():
 
 def test_default_history_keeps_identity():
     assert DialogContext().get_prompt_context().startswith(f"[SYSTEM] {IDENTITY_ANCHOR}")
+
+
+def test_history_block_already_in_context_is_not_repeated():
+    facts = "Известные факты о пользователе и системе:\n  [user] name: SYNTHETIC FACT"
+    namespace = {"os": os, "log": logging.getLogger("test.prompt")}
+    captured = []
+    def post(url, **kwargs):
+        captured.append(kwargs["json"]["prompt"])
+        return SimpleNamespace(status_code=200, ok=True, json=lambda: {"response": "answer"})
+    namespace["requests"] = SimpleNamespace(post=post)
+    exec(compile(ast.Module(body=[method("_ask_ollama_inner")], type_ignores=[]), str(SOURCE), "exec"), namespace)
+    history = DialogContext()
+    history.memory_ref = SimpleNamespace(get_context=lambda: facts)
+    history.add("user", "SYNTHETIC HISTORY")
+    core = SimpleNamespace(context=history, ollama_url="http://unused/api/generate",
+                           _ensure_ollama_running=lambda: True)
+    namespace["_ask_ollama_inner"](core, assembled_context() + "\n\n" + facts, "SYNTHETIC USER")
+    assert captured[0].count("SYNTHETIC FACT") == 1
+    assert "SYNTHETIC HISTORY" in captured[0]

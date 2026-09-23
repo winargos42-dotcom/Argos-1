@@ -2842,6 +2842,12 @@ class ArgosCore:
             hist = self.context.get_prompt_context()
             if identity_anchor and hist.startswith(f"[SYSTEM] {identity_anchor}"):
                 hist = hist.removeprefix(f"[SYSTEM] {identity_anchor}").lstrip("\n")
+            # Блоки истории, уже присутствующие в context (например, факты памяти),
+            # не повторяем: на CPU каждый лишний токен стоит ~0.1 с prefill.
+            hist = "\n\n".join(
+                block for block in hist.split("\n\n")
+                if block.strip() and block.strip() not in context
+            )
             system_prompt = (
                 f"{anchor_prefix}"
                 "\n[ARGOS EXECUTION RULES]\n"
