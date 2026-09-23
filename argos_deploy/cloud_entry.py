@@ -12,7 +12,7 @@ import time
 import asyncio
 from contextlib import asynccontextmanager
 from pathlib import Path
-from threading import Thread
+from threading import Thread, Lock
 
 import uvicorn
 from fastapi import FastAPI
@@ -38,15 +38,48 @@ def _report_codex_status() -> None:
 _report_codex_status()
 
 
+def _start_p2p_if_enabled(core, application):
+    """Explicit opt-in; no automatic connections to historical internet peers."""
+    if os.getenv("ARGOS_P2P_AUTOSTART", "false").strip().lower() not in ("1", "true", "yes", "on"):
+        return
+    if core is None:
+        raise RuntimeError("P2P autostart requires initialized core")
+    with application.state.p2p_lifecycle_lock:
+        if application.state.p2p_closing:
+            return
+        core.start_p2p()
+        application.state.p2p = core.p2p
+
+
 @asynccontextmanager
 async def lifespan(application):
-    yield
-    runner = getattr(application.state, "task_runner", None)
-    if runner is not None:
-        await asyncio.to_thread(runner.close)
+    try:
+        yield
+    finally:
+        # Serializes ownership with background ArgosInit, including shutdown during init.
+        with application.state.p2p_lifecycle_lock:
+            application.state.p2p_closing = True
+            p2p = getattr(application.state, "p2p", None)
+            core = getattr(application.state, "core", None)
+        try:
+            stop_voice = getattr(core, "stop_wake_word", None)
+            if callable(stop_voice):
+                await asyncio.to_thread(stop_voice)
+        finally:
+            try:
+                if p2p is not None:
+                    await asyncio.to_thread(p2p.stop)
+            finally:
+                runner = getattr(application.state, "task_runner", None)
+                if runner is not None:
+                    await asyncio.to_thread(runner.close)
 
 # Lightweight app -- no heavy imports here
 app = FastAPI(title="Argos Cloud", version="2.1.3", lifespan=lifespan)
+app.state.p2p_lifecycle_lock = Lock()
+app.state.p2p_closing = False
+app.state.p2p = None
+app.state.core = None
 app.add_middleware(CloudBearerAuthMiddleware)
 app.add_middleware(
     CORSMiddleware,
@@ -99,6 +132,14 @@ def _init_orchestrator():
         orchestrator = ArgosOrchestrator()
         core  = getattr(orchestrator, "core",  None)
         admin = getattr(orchestrator, "admin", None)
+        with app.state.p2p_lifecycle_lock:
+            app.state.core = core
+            closing = app.state.p2p_closing
+        if closing:
+            stop_voice = getattr(core, "stop_wake_word", None)
+            if callable(stop_voice):
+                stop_voice()
+            return  # shutdown already occurred while the core was initializing
 
         # Install the fail-closed communication policy before any generic MCP
         # command surface can dispatch text into ARGOS core.
@@ -125,21 +166,11 @@ def _init_orchestrator():
         # /health and / are declared above and therefore keep precedence.
         app.mount("/", mcp.app)
 
+        _start_p2p_if_enabled(core, app)
         _ready = True
         elapsed = time.time() - _boot_time
         print(f"[CLOUD] Argos ready! uptime={elapsed:.1f}s", flush=True)
 
-        # ── P2P auto-connect to known peers ──────────────────────────────
-        try:
-            p2p = getattr(orchestrator.core, "p2p", None) if orchestrator.core else None
-            if p2p:
-                from src.connectivity.peer_autoconnect import start_autoconnect
-                start_autoconnect(p2p)
-                print("[CLOUD] P2P auto-connect started", flush=True)
-            else:
-                print("[CLOUD] P2P bridge not available, skipping auto-connect", flush=True)
-        except Exception as p2p_exc:
-            print(f"[CLOUD] P2P auto-connect warning: {p2p_exc}", flush=True)
 
     except Exception as exc:
         _init_error = str(exc)

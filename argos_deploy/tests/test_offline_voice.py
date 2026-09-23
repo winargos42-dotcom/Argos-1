@@ -208,11 +208,18 @@ def test_level_dbfs_and_highpass_removes_dc():
 def test_record_seconds_always_terminates_recorder(monkeypatch):
     monkeypatch.setattr(ov.shutil, "which", lambda n: f"/usr/bin/{n}" if n == "parecord" else None)
     proc = MagicMock()
-    proc.stdout.read.side_effect = lambda n: b"\x01\x00" * (n // 2)
+    # Exercise an actual selectable PCM pipe instead of a fake buffered read.
+    read_fd, write_fd = os.pipe()
+    os.write(write_fd, b"\x01\x00" * 2000)
+    os.close(write_fd)
+    proc.stdout = os.fdopen(read_fd, 'rb', buffering=0)
     popen = MagicMock(return_value=proc)
     monkeypatch.setattr(ov.subprocess, "Popen", popen)
-    data = ov.record_seconds(0.5, highpass=False)
-    assert len(data) == 16000
+    try:
+        data = ov.record_seconds(0.125, highpass=False)
+    finally:
+        proc.stdout.close()
+    assert len(data) == 4000
     cmd = popen.call_args[0][0]
     assert cmd[0] == "parecord" and "--rate=16000" in cmd and "--channels=1" in cmd
     proc.terminate.assert_called_once()

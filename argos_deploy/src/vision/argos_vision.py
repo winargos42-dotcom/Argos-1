@@ -19,6 +19,7 @@ vision.py — Глаза Аргоса (Computer Vision)
   ARGOS_VISION_MAX_SIDE   — уменьшать кадр до N px по длинной стороне (640)
   ARGOS_YUNET_MODEL       — путь к face_detection_yunet_2023mar.onnx
   ARGOS_DISABLE_GEMINI    — true: не использовать Gemini
+  ARGOS_VISION_CLOUD_ENABLED — true: явно разрешить облачный Vision (по умолчанию off)
 """
 
 import os
@@ -251,7 +252,8 @@ class ArgosVision:
                 self._key = os.getenv("GEMINI_API_KEY", "")
         self._client = None
         self._model_name = os.getenv("GEMINI_MODEL", "gemini-2.5-flash").strip() or "gemini-2.5-flash"
-        if GEMINI_OK and self._key and self._key != "your_key_here":
+        if (os.getenv("ARGOS_VISION_CLOUD_ENABLED", "false").strip().lower() in _ON
+                and GEMINI_OK and self._key and self._key != "your_key_here"):
             self._client = genai_sdk.Client(api_key=self._key)
             log.info("Vision: Gemini Vision подключён.")
         else:

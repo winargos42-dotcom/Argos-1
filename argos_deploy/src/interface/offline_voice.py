@@ -25,6 +25,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import selectors
 import shutil
 import subprocess
 import tempfile
@@ -356,9 +357,16 @@ class MicStream:
         return self
 
     def read(self, nbytes: int = CHUNK_BYTES) -> bytes:
-        if not self._proc or not self._proc.stdout:
+        proc = self._proc
+        if not proc or not proc.stdout:
             return b""
-        data = self._proc.stdout.read(nbytes)
+        # A live but silent recorder must not defeat listen()/record deadlines.
+        # Read only ready bytes: buffered .read(n) may wait forever for all n.
+        with selectors.DefaultSelector() as selector:
+            selector.register(proc.stdout, selectors.EVENT_READ)
+            if not selector.select(timeout=1.0):
+                raise TimeoutError('microphone_pcm_timeout')
+            data = os.read(proc.stdout.fileno(), nbytes)
         if data and self._hpf:
             data = self._hpf.process(data)
         return data or b""
@@ -383,6 +391,9 @@ class MicStream:
                 proc.wait(timeout=2)
             except Exception:
                 pass
+        finally:
+            if proc.stdout is not None:
+                proc.stdout.close()
 
     def __exit__(self, *exc) -> None:
         self.close()
@@ -542,6 +553,7 @@ class VoskWakeLoop:
         self._stop = threading.Event()
         self._thread: Optional[threading.Thread] = None
         self._mic: Optional[MicStream] = None
+        self._mic_lock = threading.Lock()
 
     @property
     def running(self) -> bool:
@@ -556,9 +568,10 @@ class VoskWakeLoop:
 
     def stop(self, join_timeout: float = 3.0) -> None:
         self._stop.set()
-        mic = self._mic
-        if mic is not None:
-            mic.close()
+        with self._mic_lock:
+            mic = self._mic
+            if mic is not None:
+                mic.close()
         if self._thread and self._thread is not threading.current_thread():
             self._thread.join(join_timeout)
 
@@ -581,7 +594,11 @@ class VoskWakeLoop:
             pending_command: Optional[str] = None
             try:
                 with self.mic_factory() as mic:
-                    self._mic = mic
+                    with self._mic_lock:
+                        # stop may have run during __enter__, before publication.
+                        if self._stop.is_set():
+                            break
+                        self._mic = mic
                     awaiting_until: Optional[float] = None
                     for chunk in mic.chunks():
                         if self._stop.is_set():
@@ -613,7 +630,8 @@ class VoskWakeLoop:
                 log.warning("Wake(Vosk) mic: %s", exc)
                 self._stop.wait(2.0)
             finally:
-                self._mic = None
+                with self._mic_lock:
+                    self._mic = None
             if pending_command and not self._stop.is_set():
                 # Микрофон закрыт на время обработки команды — Аргос не слушает сам себя.
                 try:

@@ -415,24 +415,18 @@ class ArgosIntegrator:
         """Интеграция vision (компьютерное зрение)."""
         result = IntegrationResult("vision")
         
-        components = [
-            ("src.vision.shadow_vision", "ShadowVision", "shadow"),
-            ("src.vision", "VisionModule", "vision"),
-        ]
-        
-        for module, cls_name, key in components:
-            cls = self._safe_import(module, cls_name)
-            if cls:
-                try:
-                    instance = cls()
-                    self._registry[f"vision.{key}"] = instance
-                    result.loaded.append(key)
-                    
-                    if self.core and hasattr(self.core, 'vision'):
-                        self.core.vision = instance
-                except Exception as e:
-                    result.failed.append(f"{key}: {e}")
-                    
+        from src.vision import ArgosVision, ShadowVision
+        try:
+            current = getattr(self.core, "vision", None) if self.core else None
+            vision = current if current is not None else ArgosVision()
+            self._registry["vision.vision"] = vision
+            self._registry["vision.shadow"] = ShadowVision(self.core)
+            if self.core is not None and current is None:
+                self.core.vision = vision
+            result.loaded.extend(["vision", "shadow"])
+        except Exception as error:
+            result.failed.append("vision: " + type(error).__name__)
+
         self._results.append(result)
         log.info(str(result))
         return result

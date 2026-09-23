@@ -119,8 +119,9 @@ class AWACore:
             from src.vision.shadow_vision import ShadowVision
 
             sv = ShadowVision(self.core)
-            sv.start_vision_loop()
-            log.info("AWA: ShadowVision запущен")
+            if os.getenv('ARGOS_SHADOW_VISION_ENABLED', '').lower() in {'1', 'true', 'on'}:
+                sv.start_vision_loop()
+                log.info("AWA: ShadowVision запущен по явной настройке")
             return sv
         except Exception as e:
             log.warning("AWA: ShadowVision недоступен: %s", e)

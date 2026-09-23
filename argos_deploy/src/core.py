@@ -1704,8 +1704,12 @@ class ArgosCore:
     # P2P / DASHBOARD / WAKE WORD
     # ═══════════════════════════════════════════════════════
     def start_p2p(self) -> str:
-        self.p2p = ArgosBridge(core=self)
-        result = self.p2p.start()
+        bridge = self.p2p
+        if bridge is None:
+            bridge = ArgosBridge(core=self)
+        result = bridge.start()
+        # Keep the last owned bridge on failure; never publish an unbound candidate.
+        self.p2p = bridge
         log.info("P2P: %s", result.split('\n')[0])
         return result
 
@@ -1727,27 +1731,48 @@ class ArgosCore:
             return f"❌ Dashboard: {e}"
 
     def start_wake_word(self, admin, flasher) -> str:
-        try:
-            from src.connectivity.wake_word import WakeWordListener
-            if self._wake is not None and getattr(self._wake, "running", False):
-                return "Wake Word: уже запущен."
-            self._wake = WakeWordListener(self, admin, flasher)
-            return self._wake.start()
-        except Exception as e:
-            return f"❌ Wake Word: {e}"
+        lock = getattr(self, '_voice_lifecycle_lock', None)
+        if lock is None:  # Compatibility for callers without full core initialization.
+            lock = self._voice_lifecycle_lock = threading.RLock()
+        with lock:
+            self._voice_autostart_generation = getattr(self, '_voice_autostart_generation', 0) + 1
+            timer = getattr(self, '_voice_autostart_timer', None)
+            if timer is not None:
+                timer.cancel()
+                self._voice_autostart_timer = None
+            try:
+                from src.connectivity.wake_word import WakeWordListener
+                if self._wake is not None and getattr(self._wake, "running", False):
+                    return "Wake Word: уже запущен."
+                self._wake = WakeWordListener(self, admin, flasher)
+                return self._wake.start()
+            except Exception as e:
+                return f"❌ Wake Word: {e}"
 
     def stop_wake_word(self) -> str:
-        if self._wake is None:
-            return "Wake Word не запущен."
-        try:
-            return self._wake.stop()
-        except Exception as e:
-            return f"❌ Wake Word: {e}"
+        lock = getattr(self, '_voice_lifecycle_lock', None)
+        if lock is None:
+            lock = self._voice_lifecycle_lock = threading.RLock()
+        with lock:
+            self._voice_autostart_generation = getattr(self, '_voice_autostart_generation', 0) + 1
+            timer = getattr(self, '_voice_autostart_timer', None)
+            if timer is not None:
+                timer.cancel()
+                self._voice_autostart_timer = None
+            if self._wake is None:
+                return "Wake Word не запущен."
+            try:
+                return self._wake.stop()
+            except Exception as e:
+                return f"❌ Wake Word: {e}"
 
     # ═══════════════════════════════════════════════════════
     # ГОЛОС
     # ═══════════════════════════════════════════════════════
     def _init_voice(self):
+        self._voice_lifecycle_lock = threading.RLock()
+        self._voice_autostart_generation = 0
+        self._voice_autostart_timer = None
         # 1) Офлайн Piper/espeak-ng через PipeWire (Linux-десктоп)
         self._offline_tts = None
         try:
@@ -1783,9 +1808,17 @@ class ArgosCore:
 
             if voice_enabled():
                 delay = float(os.getenv("ARGOS_VOICE_AUTOSTART_DELAY", "20") or 20)
-                timer = threading.Timer(delay, lambda: log.info(self.start_wake_word(None, None)))
-                timer.daemon = True
-                timer.start()
+                with self._voice_lifecycle_lock:
+                    generation = self._voice_autostart_generation
+                    def autostart():
+                        with self._voice_lifecycle_lock:
+                            if generation != self._voice_autostart_generation:
+                                return
+                            log.info(self.start_wake_word(None, None))
+                    timer = threading.Timer(delay, autostart)
+                    timer.daemon = True
+                    self._voice_autostart_timer = timer
+                    timer.start()
         except Exception as e:
             log.warning("Wake word autostart: %s", e)
 
@@ -1820,7 +1853,9 @@ class ArgosCore:
                     return text.lower()
         except Exception as e:
             log.warning("Vosk STT: %s", e)
-        if SR_OK:
+        if SR_OK and os.getenv('ARGOS_VOICE_CLOUD_ENABLED', 'false').strip().lower() in (
+            '1', 'true', 'on', 'yes', 'да', 'вкл'
+        ):
             try:
                 rec = sr.Recognizer()
                 with sr.Microphone() as src:
