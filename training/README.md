@@ -76,6 +76,36 @@ done
 открытого русскоязычного instruct-датасета с подходящей лицензией (прогнав их через те же фильтры
 и заменив system prompt).
 
+## Общие знания: Big Russian Dataset (2026-09-24)
+
+Маленький набор ARGOS (~1 тыс.) дополнен выборкой из **Big Russian Dataset** (ZeroAgency, MIT; зеркало —
+бакет `hf://buckets/AvaSiG/ru-big-russian-dataset-bucket`, 1,71 млн диалогов с оценками GPT-4.1 по 17 критериям).
+
+```bash
+D=/home/.argos-storage/datasets/big-russian; mkdir -p $D/data
+for i in $(seq -w 0 18); do
+  hf buckets cp hf://buckets/AvaSiG/ru-big-russian-dataset-bucket/data/train-000$i-of-00019.parquet $D/data/
+done
+python training/select_big_russian.py        # → big-russian/candidates.jsonl (8000) + candidates_stats.json
+python training/build_argos_v2_dataset.py    # подхватывает candidates.jsonl автоматически
+```
+
+- `select_big_russian.py`: оценки ≥ 8 (overall, quality, correctness, coherence, relevance, error_free, safety),
+  без `<think>`-рассуждений, ролевых игр, отказов и PII; только стандартный system prompt датасета (его можно
+  заменить); без пересказа новостей, английских lmsys, длинных решений задач с формулами и кода;
+  user ≤ 500, assistant ≤ 900 символов, ≥ 60 % кириллицы; резервуарная выборка по темам (≤ 8 % на тему,
+  ≤ 20 % на источник). Читает parquet пакетами — память не растёт с размером датасета.
+- Сборщик прогоняет кандидатов через **те же фильтры**, что и данные ARGOS (для них дополнительно
+  засчитываются просьбы в повелительном наклонении: «составь», «перефразируй», «посоветуй»…), заменяет
+  system prompt на канонический и берёт не больше `BIG_RU_MAX = 2500`, чтобы личность ARGOS не утонула.
+
+## Вариант D — Google Диск (Colab)
+
+Положить `train.jsonl`, `val.jsonl`, `test.jsonl` в `Мой диск/ARGOS REBOOT/argos-v2/` (тот же Google-аккаунт, что и в Colab)
+(с X230: `rclone copy /home/.argos-storage/datasets/argos-v2 "gdrive:ARGOS REBOOT/argos-v2" --include "*.jsonl"`).
+В ноутбуке `DATA_SOURCE = "auto"` сам подключит Диск; результат (GGUF, Modelfile) копируется в
+`Мой диск/ARGOS REBOOT/argos-v2/release/` (`SAVE_TO_DRIVE = True`).
+
 ## Загрузка данных для обучения (делает владелец своим токеном)
 
 **Вариант A — датасет на Hugging Face `AvaSiG/argos-v2-sft`:**

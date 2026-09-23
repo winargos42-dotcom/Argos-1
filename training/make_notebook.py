@@ -79,7 +79,9 @@ code(f'''
 # 2. Настройки
 import os, json, glob, getpass
 
-DATA_SOURCE   = "auto"   # "hf" | "kaggle" | "local" | "auto" (Kaggle input → HF)
+DATA_SOURCE   = "auto"   # "drive" | "hf" | "kaggle" | "local" | "auto" (Kaggle input → Google Drive в Colab → HF)
+DRIVE_DIR     = "/content/drive/MyDrive/ARGOS REBOOT/argos-v2"   # Colab: папка с train/val/test.jsonl на Google Диске
+SAVE_TO_DRIVE = True     # Colab: копировать результат (GGUF, Modelfile) в DRIVE_DIR/release
 HF_DATASET    = "AvaSiG/argos-v2-sft"          # приватный или публичный датасет владельца
 KAGGLE_DIR    = "/kaggle/input/argos-v2-sft"   # Kaggle: Add Input → ваш датасет с train/val/test.jsonl
 LOCAL_DIR     = "./argos-v2"                   # Colab: загрузите файлы сюда вручную
@@ -132,6 +134,17 @@ code("""
 # 4. Данные: train / val / test в chat-формате {"messages": [...], "source": ...}
 from datasets import load_dataset
 
+def mount_drive():
+    # Colab: подключить Google Диск (спросит разрешение один раз). Вне Colab — False.
+    if os.path.isdir("/content/drive/MyDrive"):
+        return True
+    try:
+        from google.colab import drive
+    except ImportError:
+        return False
+    drive.mount("/content/drive")
+    return os.path.isdir("/content/drive/MyDrive")
+
 def pick_source():
     if DATA_SOURCE != "auto":
         return DATA_SOURCE
@@ -144,6 +157,8 @@ def pick_source():
         return "kaggle"
     if os.path.exists(os.path.join(LOCAL_DIR, "train.jsonl")):
         return "local"
+    if mount_drive() and os.path.exists(os.path.join(DRIVE_DIR, "train.jsonl")):
+        return "drive"
     return "hf"
 
 src = pick_source()
@@ -154,7 +169,9 @@ if src == "hf":
     except Exception:
         ds = load_dataset(HF_DATASET, data_files=files, token=get_hf_token())
 else:
-    base = KAGGLE_DIR if src == "kaggle" else LOCAL_DIR
+    if src == "drive":
+        assert mount_drive(), "Google Диск не подключён"
+    base = {"kaggle": KAGGLE_DIR, "drive": DRIVE_DIR}.get(src, LOCAL_DIR)
     ds = load_dataset("json", data_files={k: os.path.join(base, v) for k, v in files.items()})
 print("источник:", src)
 print(ds)
@@ -348,7 +365,11 @@ code("""
 import shutil
 archive = shutil.make_archive(os.path.join(WORK, OUT_NAME + "-release"), "zip", final_dir)
 print(archive, round(os.path.getsize(archive) / 2**20), "MiB")
-if not IN_KAGGLE:
+if not IN_KAGGLE and SAVE_TO_DRIVE and mount_drive():
+    dest = os.path.join(DRIVE_DIR, "release")
+    shutil.copytree(final_dir, dest, dirs_exist_ok=True)
+    print("скопировано на Google Диск:", dest)
+elif not IN_KAGGLE:
     try:
         from google.colab import files
         files.download(archive)

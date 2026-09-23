@@ -43,6 +43,7 @@ TEMPLATE_MAX_SHARE = 0.25   # templated examples may be at most this share of tr
 SEED_UPSAMPLE = 2          # hand-written seeds appear this many times in train
 TEST_POOL_SIZE = 60        # pool examples added to the held-out test on top of TEST_SEEDS
 VAL_SHARE = 0.05
+BIG_RU_MAX = 2500          # общие русские диалоги из Big Russian (после всех фильтров) — не больше
 MAX_USER_CHARS = 500
 MAX_ASSISTANT_CHARS = 900
 
@@ -80,6 +81,12 @@ def load_sources(src: str):
     if os.path.exists(p):
         for r in _read_jsonl(p):
             yield f"quantum:{r.get('source', '?').split(':')[0]}", r["messages"]
+
+    # Big Russian Dataset (ZeroAgency, MIT): кандидаты от select_big_russian.py
+    p = os.path.join(src, "big-russian", "candidates.jsonl")
+    if os.path.exists(p):
+        for r in _read_jsonl(p):
+            yield f"bigru:{r.get('source', '?')}", r["messages"]
 
     for p in sorted(glob.glob(os.path.join(src, "ru-reasoning-train", "**", "*.jsonl"), recursive=True)):
         for r in _read_jsonl(p):
@@ -187,14 +194,24 @@ PII_RE = re.compile(
     r"\b[\w.+\-]+@(?!(example|noreply|anthropic)\.)[\w\-]+\.[\w.\-]+", re.I)            # e-mails (non-public)
 
 
-def all_reasons(user: str, assistant: str) -> list[str]:
+# Для общего датасета (Big Russian) просьбы в повелительном наклонении — нормальные запросы;
+# для логов ARGOS список не расширяем, там такие строки часто оказываются командами бота.
+TASK_RE = re.compile(
+    r"^(составь|перефразируй|посоветуй|приведи|придумай|сгенерируй|сформулируй|предложи|оцени|определи|"
+    r"классифицируй|исправь|сократи|продолжи|помоги|найди|реши|докажи|перечисли|объясни|опиши|напиши|"
+    r"переведи|назови|сравни|подскажи|разработай|создай|преобразуй|перепиши|дополни|выбери|укажи|"
+    r"вычисли|посчитай|расскажи|переформулируй|проанализируй|сделай|дай)(те)?\b", re.I)
+
+
+def all_reasons(user: str, assistant: str, general: bool = False) -> list[str]:
     """Every rule the turn violates, in priority order (first = primary drop reason). Empty = keep."""
     r = []
     if PII_RE.search(user) or PII_RE.search(assistant):
         r.append("pii_or_secret")
     if meaningful(user) < 3:
         r.append("user_too_short")
-    elif meaningful(user) < 8 or not QUESTION_RE.search(user.strip()):
+    elif meaningful(user) < 8 or not (QUESTION_RE.search(user.strip())
+                                      or (general and TASK_RE.search(user.strip()))):
         r.append("user_not_a_real_request")
     if len(user) > MAX_USER_CHARS:
         r.append("user_too_long_paste")
@@ -396,7 +413,7 @@ def main():
         seen.add(k)
         reasons = []
         for u, a in turns:
-            reasons += all_reasons(u, a)
+            reasons += all_reasons(u, a, general=src.startswith("bigru:"))
         reasons = list(dict.fromkeys(reasons))
         cat = category(turns[0][0])
         categories[cat]["kept" if not reasons else "dropped"] += 1
@@ -427,6 +444,14 @@ def main():
         return keep
 
     pool, dal, tmpl = not_held_out(pool, "pool"), not_held_out(dal, "dal"), not_held_out(tmpl, "tmpl")
+    # Big Russian: общие знания и стиль, но не больше BIG_RU_MAX, чтобы не заглушить личность ARGOS
+    big = [x for x in pool if x[0].startswith("bigru:")]
+    if len(big) > BIG_RU_MAX:
+        rng.shuffle(big)
+        for s, _ in big[BIG_RU_MAX:]:
+            drops["big_russian_over_cap"] += 1; drops_by_src[s]["big_russian_over_cap"] += 1
+        keep_big = {id(x) for x in big[:BIG_RU_MAX]}
+        pool = [x for x in pool if not x[0].startswith("bigru:") or id(x) in keep_big]
     seen_seed = set()
     hand_unique = []
     for s, t in not_held_out(hand, "hand"):
