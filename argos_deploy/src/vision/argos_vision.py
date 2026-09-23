@@ -627,7 +627,7 @@ class ArgosVision:
         faces = det.detect(frame)
         motion = motion_score(frames[0], frames[-1]) if len(frames) > 1 else 0.0
         bright = frame_brightness(frame)
-        return {
+        info = {
             "width": int(w),
             "height": int(h),
             "brightness": round(bright, 1),
@@ -638,6 +638,26 @@ class ArgosVision:
             "face_boxes": faces,
             "face_method": det.method,
         }
+        coral = self.coral_detect(frame)
+        if coral is not None:
+            info["coral"] = coral
+        return info
+
+    @staticmethod
+    def coral_detect(frame):
+        """Объекты в кадре на узле Coral (если ARGOS_CORAL_URL задан). Сбой — {"error": ...}, не исключение."""
+        if not CV2_OK or not os.getenv("ARGOS_CORAL_URL", "").strip():
+            return None
+        try:
+            from src.vision.coral_client import CoralClient
+
+            ok, buf = cv2.imencode(".jpg", frame, [int(cv2.IMWRITE_JPEG_QUALITY), 85])
+            if not ok:
+                raise RuntimeError("не удалось сжать кадр")
+            return CoralClient.from_env().detect(buf.tobytes())
+        except Exception as e:
+            log.warning("Coral: %s", e)
+            return {"error": str(e)}
 
     @staticmethod
     def format_local_analysis(info: dict) -> str:
@@ -649,7 +669,17 @@ class ArgosVision:
             f"📷 Камера: {info['width']}×{info['height']}, яркость {info['brightness']:.0f}/255 "
             f"({info['brightness_label']}), движение: {'да' if info['motion_detected'] else 'нет'} "
             f"({info['motion'] * 100:.1f}%), {face_txt} [{info.get('face_method')}]"
-        )
+        ) + ArgosVision._format_coral(info.get("coral"))
+
+    @staticmethod
+    def _format_coral(coral) -> str:
+        if not coral:
+            return ""
+        if coral.get("error"):
+            return f"\n👁 Coral недоступен: {coral['error']}"
+        from src.vision.coral_client import summarize
+
+        return "\n" + summarize(coral)
 
     def camera_report(self) -> str:
         """Быстрый локальный отчёт по камере (без LLM)."""

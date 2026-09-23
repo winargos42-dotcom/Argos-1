@@ -12,7 +12,8 @@ coral.py — зрение через узел argos-coral (Coral Edge TPU) бе�
 from __future__ import annotations
 
 import re
-from collections import Counter
+
+from src.vision.coral_client import summarize  # noqa: F401  (ответ навыка)
 
 SKILL_DESCRIPTION = "Детекция объектов и лиц на Coral Edge TPU (узел argos-coral)"
 
@@ -20,18 +21,6 @@ _CORAL = r"(корал\w*|coral)"
 _STATUS = rf"({_CORAL}\W+(статус|status|состояние)|(статус|состояние)\W+{_CORAL})"
 _FACES = rf"{_CORAL}\W+(\w+\W+)?лиц\w*"
 _LOOK = rf"(что\W+(видит|видишь)\W+{_CORAL}|{_CORAL}\W+(что\W+видишь|посмотри|кто\W+в\W+кадре|камера|объекты))"
-
-RU = {
-    "person": "человек", "bicycle": "велосипед", "car": "машина", "motorcycle": "мотоцикл",
-    "bus": "автобус", "truck": "грузовик", "cat": "кошка", "dog": "собака", "bird": "птица",
-    "bottle": "бутылка", "cup": "кружка", "chair": "стул", "couch": "диван", "bed": "кровать",
-    "dining table": "стол", "tv": "телевизор", "laptop": "ноутбук", "mouse": "мышь",
-    "keyboard": "клавиатура", "cell phone": "телефон", "book": "книга", "clock": "часы",
-    "potted plant": "растение", "remote": "пульт", "scissors": "ножницы", "backpack": "рюкзак",
-    "handbag": "сумка", "knife": "нож", "spoon": "ложка", "bowl": "миска", "sink": "раковина",
-    "refrigerator": "холодильник", "microwave": "микроволновка", "oven": "духовка",
-    "toilet": "унитаз", "umbrella": "зонт", "vase": "ваза", "teddy bear": "игрушка", "face": "лицо",
-}
 
 
 def _client():
@@ -56,19 +45,6 @@ def _frame_jpeg(core=None) -> bytes:
     if not ok:
         raise RuntimeError("не удалось сжать кадр")
     return buf.tobytes()
-
-
-def summarize(result: dict) -> str:
-    objects = result.get("objects") or []
-    where = "TPU" if result.get("tpu") else "CPU"
-    timing = f"{result.get('inference_ms', '?')} мс на {where}"
-    if not objects:
-        return f"👁 Coral: в кадре ничего не распознано ({timing})."
-    counts = Counter(RU.get(o["label"], o["label"]) for o in objects)
-    parts = [f"{name} ×{n}" if n > 1 else name for name, n in counts.most_common()]
-    best = max(objects, key=lambda o: o["score"])
-    return (f"👁 Coral видит: {', '.join(parts)} "
-            f"(уверенность до {best['score']:.0%}, {timing}).")
 
 
 def _status_text(client) -> str:

@@ -216,3 +216,42 @@ def test_summarize_counts():
     result = {"tpu": True, "inference_ms": 7.1, "objects": [
         {"label": "person", "score": 0.9}, {"label": "person", "score": 0.7}, {"label": "cat", "score": 0.6}]}
     assert coral_skill.summarize(result) == "👁 Coral видит: человек ×2, кошка (уверенность до 90%, 7.1 мс на TPU)."
+
+
+# ── отчёт камеры ArgosVision с Coral ─────────────────────
+def test_camera_analysis_uses_coral(monkeypatch, live_server):
+    from src.vision import argos_vision as V
+
+    if not V.CV2_OK:
+        pytest.skip("нет OpenCV")
+    monkeypatch.setenv("ARGOS_DISABLE_GEMINI", "true")
+    monkeypatch.setenv("ARGOS_CORAL_URL", live_server)
+    monkeypatch.setenv("ARGOS_CORAL_SECRET", KEY.decode())
+    monkeypatch.delenv("ARGOS_CORAL_SECRET_FILE", raising=False)
+    frame = np.full((480, 640, 3), 120, dtype=np.uint8)
+    info = V.ArgosVision().camera_local_analysis([frame, frame])
+    assert [o["label"] for o in info["coral"]["objects"]] == ["person", "dog"]
+    assert "\n👁 Coral видит: человек, собака" in V.ArgosVision.format_local_analysis(info)
+
+
+def test_camera_analysis_survives_coral_outage(monkeypatch):
+    from src.vision import argos_vision as V
+
+    if not V.CV2_OK:
+        pytest.skip("нет OpenCV")
+    monkeypatch.setenv("ARGOS_DISABLE_GEMINI", "true")
+    monkeypatch.setenv("ARGOS_CORAL_URL", "http://127.0.0.1:9")
+    monkeypatch.setenv("ARGOS_CORAL_SECRET", KEY.decode())
+    monkeypatch.delenv("ARGOS_CORAL_SECRET_FILE", raising=False)
+    frame = np.full((480, 640, 3), 120, dtype=np.uint8)
+    info = V.ArgosVision().camera_local_analysis([frame])
+    assert "недоступен" in info["coral"]["error"]
+    report = V.ArgosVision.format_local_analysis(info)
+    assert report.startswith("📷 Камера: 640×480") and "Coral недоступен" in report
+
+
+def test_camera_analysis_without_coral(monkeypatch):
+    from src.vision import argos_vision as V
+
+    monkeypatch.delenv("ARGOS_CORAL_URL", raising=False)
+    assert V.ArgosVision.coral_detect(np.zeros((4, 4, 3), dtype=np.uint8)) is None

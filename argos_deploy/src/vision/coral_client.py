@@ -13,9 +13,23 @@ import json
 import os
 import urllib.error
 import urllib.request
+from collections import Counter
 from urllib.parse import urlencode, urlsplit
 
 from src.vision import coral_protocol as proto
+
+
+RU = {
+    "person": "человек", "bicycle": "велосипед", "car": "машина", "motorcycle": "мотоцикл",
+    "bus": "автобус", "truck": "грузовик", "cat": "кошка", "dog": "собака", "bird": "птица",
+    "bottle": "бутылка", "cup": "кружка", "chair": "стул", "couch": "диван", "bed": "кровать",
+    "dining table": "стол", "tv": "телевизор", "laptop": "ноутбук", "mouse": "мышь",
+    "keyboard": "клавиатура", "cell phone": "телефон", "book": "книга", "clock": "часы",
+    "potted plant": "растение", "remote": "пульт", "scissors": "ножницы", "backpack": "рюкзак",
+    "handbag": "сумка", "knife": "нож", "spoon": "ложка", "bowl": "миска", "sink": "раковина",
+    "refrigerator": "холодильник", "microwave": "микроволновка", "oven": "духовка",
+    "toilet": "унитаз", "umbrella": "зонт", "vase": "ваза", "teddy bear": "игрушка", "face": "лицо",
+}
 
 
 class CoralUnavailable(RuntimeError):
@@ -75,3 +89,16 @@ class CoralClient:
             raise ValueError("пустой кадр")
         query = urlencode({"model": model, "threshold": f"{threshold:.2f}", "top_k": int(top_k)})
         return self._call("POST", f"/v1/detect?{query}", image)
+
+
+def summarize(result: dict) -> str:
+    objects = result.get("objects") or []
+    where = "TPU" if result.get("tpu") else "CPU"
+    timing = f"{result.get('inference_ms', '?')} мс на {where}"
+    if not objects:
+        return f"👁 Coral: в кадре ничего не распознано ({timing})."
+    counts = Counter(RU.get(o["label"], o["label"]) for o in objects)
+    parts = [f"{name} ×{n}" if n > 1 else name for name, n in counts.most_common()]
+    best = max(objects, key=lambda o: o["score"])
+    return (f"👁 Coral видит: {', '.join(parts)} "
+            f"(уверенность до {best['score']:.0%}, {timing}).")
