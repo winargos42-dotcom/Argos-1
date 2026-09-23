@@ -17,7 +17,8 @@ HELPERS = ['tests/test_browser_conduit.py', 'tests/test_requirements_runtime_dep
 RUNTIME = ['tests/test_file_operations.py', 'tests/test_self_healing.py', 'tests/test_pricing.py', 'tests/test_tool_calling.py']
 HELPERS += ["tests/test_golden_application.py", "tests/test_task_runtime.py",
             "tests/test_task_runtime_edges.py", "tests/test_task_control.py",
-            "tests/test_control_api.py", "tests/test_control_integration.py", "tests/test_memory_index.py"]
+            "tests/test_control_api.py", "tests/test_control_integration.py", "tests/test_memory_index.py",
+            "tests/test_media_inventory.py"]
 
 
 def include_all_source(data_file):

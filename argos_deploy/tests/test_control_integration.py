@@ -2,6 +2,7 @@ import ast
 import asyncio
 from contextlib import asynccontextmanager
 from pathlib import Path
+from threading import Lock
 from types import SimpleNamespace
 
 from fastapi import FastAPI
@@ -21,6 +22,8 @@ def test_real_cloud_lifespan_closes_queued_work(tmp_path):
     task = runner.submit("must not run after stop")
     app = FastAPI(lifespan=scope["lifespan"])
     app.state.task_runner = runner
+    app.state.p2p_lifecycle_lock = Lock()
+    app.state.p2p_closing = False
     with TestClient(app):
         assert runner.get(task["id"])["status"] == "queued"
     assert runner.get(task["id"])["status"] == "cancelled"
