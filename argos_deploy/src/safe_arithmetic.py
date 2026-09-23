@@ -57,6 +57,9 @@ def try_calculate(text: str) -> str | None:
     expression = text.strip()
     if prefix:
         expression = expression[prefix.end():]
+        # «Сколько будет дней в неделе?» — обычный вопрос, а не арифметика.
+        if prefix.group(0).casefold().startswith("сколько") and not re.search(r"[0-9]", expression):
+            return None
     expression = re.sub(r"\.\s*ответь\s+только\s+числом\.?$", "", expression, flags=re.IGNORECASE)
     expression = expression.rstrip("?").strip().replace(",", ".")
     if not prefix and re.fullmatch(r"[+-]?\s*(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)", expression):
