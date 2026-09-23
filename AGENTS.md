@@ -4141,3 +4141,9 @@ User approved execution of the development roadmap. First bounded iteration adds
 - Action: implemented indexed memory, separate facts, durable tasks, streaming/cancellation, Russian authenticated panel and verified source installation/rollback.
 - Изменено: deployed core integration, memory/task/control modules, UI, focused tests, release utility, operator guide and roadmap log.
 - Проверка: browser desktop/mobile PASS; API/auth36, focused integration39, task/stream29 and release17 PASS (overlapping suites). Whole-source coverage and live delivery pending; cloud login/domain/devices remain externally blocked.
+
+## Session — 2026-09-23 Local media recovery
+- Action: Preserved installed media/P2P recovery and truthful Claude template errors.
+- Изменено: argos_deploy sources and tests; dated recovery log; session summary.
+- Проверка: eleven focused test files passed individually; media source hashes match live.
+- Remaining: template fix runtime install, external peers, cloud access, full release CI.
