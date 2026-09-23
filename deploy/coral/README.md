@@ -39,5 +39,25 @@ X230 (ARGOS, камера)  ── JPEG + HMAC ──▶  argos-coral:8770 argos
 - «что видит корал» отвечает меньше чем за 1 с вместе со снимком кадра.
 - Неподписанный запрос → 401, чужой адрес → 403; кадры на диск не пишутся.
 
-Известный риск: `libedgetpu1-std` 16.0 и новый `tflite-runtime` иногда несовместимы — бенчмарк
-это покажет сразу; тогда закрепить `ARGOS_TFLITE_VERSION` на версии, с которой бенчмарк проходит.
+## ПОДТВЕРЖДЁННЫЙ БЛОКЕР (2026-09-24): рантайм ↔ libedgetpu
+
+Проверено на самом узле (192.168.1.94, Debian 12, Python 3.11.2):
+- ОС на SSD, `/dev/apex_0` есть, модули `apex`+`gasket`, `gasket-dkms 1.0-18`, `libedgetpu1-std 16.0` — всё стоит;
+- делегат `libedgetpu.so.1` **грузится** и в `tflite_runtime`, и в `ai_edge_litert`;
+- но создание интерпретатора с моделью **падает**: `tflite-runtime==2.14.0` → `SystemError`,
+  `ai_edge_litert` → **segfault**. Причина: стоковый `libedgetpu` 16.0 (сборка июля 2021) несовместим
+  по ABI с рантаймами для Python 3.11. Рабочая пара для 16.0 — `tflite_runtime 2.5.0`, но её колёс под
+  cp311 нет (только cp39), а pip под cp311 отдаёт лишь `tflite-runtime 2.14.0`. Python 3.9, Docker и
+  `pycoral` на узле отсутствуют.
+
+**Решение (одно из):**
+1. **Matched-пакеты feranick** (стандартный фикс этой проблемы): поставить на узел `libedgetpu1-std` и
+   `tflite_runtime` (при желании `pycoral`) из релизов github.com/feranick — они собраны согласованно
+   под Python 3.10–3.12 и новый TF. Заменяет стоковый libedgetpu, поэтому это осознанное системное
+   изменение узла; после установки прогнать `coral_accel_server.py --benchmark`.
+2. **Docker-контейнер Coral** — образ с уже согласованными libedgetpu + tflite; тогда сервис зрения
+   запускать в контейнере с пробросом `/dev/apex_0`.
+
+До этого сервис `argos-vision-accel` работать не будет. `coral_accel_server.py` уже пробует
+`tflite_runtime → ai_edge_litert → tensorflow.lite`, так что после установки рабочей пары код менять
+не придётся.
