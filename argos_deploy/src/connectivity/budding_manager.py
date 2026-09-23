@@ -12,6 +12,16 @@ budding_manager.py — Менеджер почкования узлов Арго
   3. Если хост подходит — сериализует код и состояние и отправляет TCP-посылку.
   4. На принимающей стороне другой BuddingManager распаковывает почку
      и запускает новый процесс WhisperNode.
+
+БЕЗОПАСНОСТЬ (почкование — это выполнение чужого кода, поэтому по умолчанию всё выключено):
+  • Сеть включается только при ARGOS_BUDDING=on. Без этого объект создаётся,
+    но не открывает портов и не сканирует сеть (безопасно для тестов и импорта).
+  • Нужен сильный общий секрет ARGOS_NETWORK_SECRET (>=32 символов, не «argos_default_secret»),
+    иначе слушатель и отправка почек не запускаются.
+  • Принимаются ТОЛЬКО ГОСТ-запечатанные почки (шифр + HMAC-Стрибог). Незашифрованный
+    pickle из сети никогда не десериализуется и не выполняется (это был RCE).
+  • Слушатель привязан к ARGOS_BUDDING_BIND (по умолчанию 127.0.0.1), а не ко всем интерфейсам.
+  • Авто-поиск «плодородной земли» и авто-рассылка почек — только при ARGOS_BUDDING_AUTOSPREAD=on.
 """
 
 from __future__ import annotations
@@ -20,7 +30,6 @@ import hashlib
 import json
 import logging
 import os
-import pickle
 import re
 import socket
 import subprocess
@@ -34,6 +43,9 @@ from typing import Optional
 log = logging.getLogger("argos.budding")
 
 import numpy as np
+
+_ON = ("1", "true", "on", "yes", "да")
+_WEAK_SECRETS = ("argos_default_secret", "change_me", "changeme", "secret", "password")
 
 
 class BuddingManager:
@@ -70,27 +82,42 @@ class BuddingManager:
         self.known_hosts: set = set()
         self.sent_buds: dict = defaultdict(float)  # host -> timestamp
 
-        # ГОСТ-безопасность для шифрования почек
+        # Всё сетевое — только по явному согласию; почка = выполнение чужого кода
+        self.enabled = os.getenv("ARGOS_BUDDING", "").strip().lower() in _ON
+        self.autospread = os.getenv("ARGOS_BUDDING_AUTOSPREAD", "").strip().lower() in _ON
+        self.bind_host = os.getenv("ARGOS_BUDDING_BIND", "127.0.0.1").strip() or "127.0.0.1"
+
+        # ГОСТ-безопасность для шифрования почек: только с сильным общим секретом
         self._gost = None
-        try:
-            from src.connectivity.gost_p2p import GostP2PSecurity
-            import os as _os
+        secret = os.getenv("ARGOS_NETWORK_SECRET", "").strip()
+        if not self.enabled:
+            log.info("BuddingManager создан, но выключен (ARGOS_BUDDING=on — включить)")
+        elif len(secret) < 32 or secret.lower() in _WEAK_SECRETS:
+            log.error("BuddingManager: нужен ARGOS_NETWORK_SECRET >=32 символов и не по умолчанию — сеть не запущена")
+            self.enabled = False
+        else:
+            try:
+                from src.connectivity.gost_p2p import GostP2PSecurity
 
-            secret = _os.getenv("ARGOS_NETWORK_SECRET", "argos_default_secret")
-            self._gost = GostP2PSecurity(secret=secret)
-        except Exception:
-            pass
+                self._gost = GostP2PSecurity(secret=secret)
+            except Exception as e:
+                log.error("BuddingManager: ГОСТ недоступен (%s) — сеть не запущена", e)
+                self.enabled = False
 
-        self._start_bud_listener()
-        self._start_soil_search()
+        if self.enabled and self._gost:
+            self._start_bud_listener()
+            if self.autospread:
+                self._start_soil_search()
+            else:
+                log.info("BuddingManager: авто-распространение выключено (ARGOS_BUDDING_AUTOSPREAD=on — включить)")
 
     # ── TCP-сервер для приёма почек ──────────────────
     def _start_bud_listener(self):
         def listener():
             sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-            # Привязка ко всем интерфейсам необходима для приёма почек из LAN
-            sock.bind(("0.0.0.0", self.bud_port))
+            # Привязка к конкретному адресу (по умолчанию loopback), не ко всем интерфейсам
+            sock.bind((self.bind_host, self.bud_port))
             sock.listen(5)
             sock.settimeout(0.5)
             while self.running:
@@ -114,7 +141,7 @@ class BuddingManager:
 
     def _handle_incoming_bud(self, conn, addr):
         """Получает TCP-посылку с кодом и состоянием, запускает новый узел.
-        Поддерживает ГОСТ-зашифрованные почки (ARGOS-BUD-GOST-1) и plain pickle.
+        Принимает только ГОСТ-запечатанные почки (ARGOS-BUD-GOST-1); всё остальное отвергается.
         """
         try:
             chunks = []
@@ -125,17 +152,19 @@ class BuddingManager:
                 chunks.append(chunk)
             data = b"".join(chunks)
 
-            # Определяем формат: ГОСТ или plain pickle
-            if data.startswith(b"ARGOS-BUD-GOST-1") and self._gost:
-                try:
-                    pkg = self._gost.open_bud(data)
-                    log.info("%s ГОСТ-почка принята от %s", self.parent.node_id, addr[0])
-                except Exception as e:
-                    log.warning("%s ГОСТ проверка почки: %s", self.parent.node_id, e)
-                    conn.close()
-                    return
-            else:
-                pkg = pickle.loads(data)
+            # Принимаем ТОЛЬКО ГОСТ-запечатанные почки (шифр + HMAC). Незашифрованный
+            # pickle из сети — это удалённое выполнение кода, поэтому отвергаем сразу.
+            if not (self._gost and data.startswith(b"ARGOS-BUD-GOST-1")):
+                log.warning("%s Почка без ГОСТ-подписи от %s — отклонена", self.parent.node_id, addr[0])
+                conn.close()
+                return
+            try:
+                pkg = self._gost.open_bud(data)
+                log.info("%s ГОСТ-почка принята от %s", self.parent.node_id, addr[0])
+            except Exception as e:
+                log.warning("%s ГОСТ проверка почки: %s", self.parent.node_id, e)
+                conn.close()
+                return
 
             code = pkg["code"]
             state = pkg["state"]
@@ -192,6 +221,11 @@ class BuddingManager:
         Сериализует код родителя и отправляет его TCP-посылкой на
         target_ip:target_bud_port. Новый узел будет слушать на target_port.
         """
+        # Без общего ГОСТ-секрета почку не шлём (иначе получатель её и не примет)
+        if not self._gost:
+            log.error("%s Отправка почки без ГОСТ-секрета запрещена", self.parent.node_id)
+            return False
+
         if target_bud_port is None:
             target_bud_port = self.bud_port
 
@@ -229,12 +263,9 @@ class BuddingManager:
             "target_port": target_port or (self.parent.port + 1),
         }
 
-        # Сериализация: ГОСТ-шифрование если доступно, иначе plain pickle
-        if self._gost:
-            pkg = self._gost.seal_bud(bud_pkg)
-            log.info("%s Почка зашифрована ГОСТ Кузнечик-CTR + HMAC-Стрибог", self.parent.node_id)
-        else:
-            pkg = pickle.dumps(bud_pkg)
+        # Сериализация только с ГОСТ-шифрованием (проверка секрета — в начале метода)
+        pkg = self._gost.seal_bud(bud_pkg)
+        log.info("%s Почка зашифрована ГОСТ Кузнечик-CTR + HMAC-Стрибог", self.parent.node_id)
 
         try:
             sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -327,6 +358,10 @@ class BuddingManager:
 
     def status(self) -> str:
         """Возвращает статус менеджера почкования."""
+        if not getattr(self, "enabled", False):
+            return "🌿 BuddingManager выключен (ARGOS_BUDDING=on + сильный ARGOS_NETWORK_SECRET)"
         state = "активен" if self.running else "остановлен"
         node_id = self.parent.node_id if self.parent else "—"
-        return f"🌿 BuddingManager [{state}] | узел: {node_id} | bud_port: {self.bud_port}"
+        spread = "авто" if getattr(self, "autospread", False) else "ручное"
+        return (f"🌿 BuddingManager [{state}] | узел: {node_id} | {self.bind_host}:{self.bud_port} | "
+                f"ГОСТ-шифр | распространение: {spread}")
