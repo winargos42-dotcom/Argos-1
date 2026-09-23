@@ -1,0 +1,15 @@
+# ARGOS: права по топикам. OTA-команду панели может отправлять только argos (X230).
+user argos
+topic readwrite #
+
+user homeassistant
+topic readwrite homeassistant/#
+topic readwrite argos/home/#
+topic read argos/#
+
+user panel7
+topic read argos/#
+topic readwrite argos/panel7/status
+topic write argos/panel7/telemetry
+topic write argos/home/corridor/power/set
+topic write homeassistant/+/argos_panel7/#

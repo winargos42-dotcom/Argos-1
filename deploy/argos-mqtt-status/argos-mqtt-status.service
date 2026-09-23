@@ -1,0 +1,12 @@
+[Unit]
+Description=ARGOS: публикация состояния X230 в MQTT для панели
+After=network-online.target mosquitto.service
+Wants=mosquitto.service
+
+[Service]
+ExecStart=/home/SiG/venvs/argos-tools/bin/python /home/SiG/Projects/argos-panel7/host/argos_status_publisher.py
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target

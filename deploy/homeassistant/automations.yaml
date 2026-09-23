@@ -1,0 +1,52 @@
+- id: argos_panel_energy
+  alias: 'ARGOS: энергия → панель'
+  description: Публикует напряжение, ток и мощность защитного устройства Tuya в MQTT
+    для ARGOS Panel 7
+  triggers:
+  - platform: state
+    entity_id:
+    - sensor.multi_function_protector_phase_a_voltage
+    - sensor.multi_function_protector_phase_a_current
+    - sensor.multi_function_protector_phase_a_power
+  - platform: homeassistant
+    event: start
+  - platform: time_pattern
+    minutes: /5
+  actions:
+  - data:
+      topic: argos/home/corridor/protector/voltage
+      retain: true
+      payload: '{{ states("sensor.multi_function_protector_phase_a_voltage") }}'
+    action: mqtt.publish
+  - data:
+      topic: argos/home/corridor/protector/current
+      retain: true
+      payload: '{{ states("sensor.multi_function_protector_phase_a_current") }}'
+    action: mqtt.publish
+  - data:
+      topic: argos/home/corridor/protector/power
+      retain: true
+      payload: '{% set p = states("sensor.multi_function_protector_phase_a_power")
+        %}{{ (p|float * 1000)|round(0)|int if p not in ["unknown","unavailable"] else
+        p }}'
+    action: mqtt.publish
+  mode: queued
+- id: argos_panel_power_state
+  alias: 'ARGOS: состояние питания → панель'
+  description: Фактическое состояние выключателя защитного устройства для панели (ON/OFF
+    только по данным устройства)
+  triggers:
+  - platform: state
+    entity_id: switch.multi_function_protector_switch
+  - platform: homeassistant
+    event: start
+  - platform: time_pattern
+    minutes: /5
+  actions:
+  - data:
+      topic: argos/home/corridor/power/state
+      retain: true
+      payload: '{{ {"on":"ON","off":"OFF"}.get(states("switch.multi_function_protector_switch"),
+        "UNKNOWN") }}'
+    action: mqtt.publish
+  mode: queued
