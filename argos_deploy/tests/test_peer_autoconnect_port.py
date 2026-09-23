@@ -1,3 +1,4 @@
+import ipaddress
 import json
 
 import pytest
@@ -31,12 +32,6 @@ def test_autoconnect_probes_the_port_used_by_bridge(monkeypatch, tmp_path, bridg
         def settimeout(self, timeout):
             pass
 
-        def sendall(self, payload):
-            assert json.loads(payload)["action"] == "status"
-
-        def recv(self, size):
-            return json.dumps({"node_id": "remote-node", "hostname": "test-peer"}).encode()
-
         def close(self):
             pass
 
@@ -46,9 +41,23 @@ def test_autoconnect_probes_the_port_used_by_bridge(monkeypatch, tmp_path, bridg
         return sock
 
     monkeypatch.setattr(peer_autoconnect.socket, "create_connection", create_connection)
-    monkeypatch.setattr(p2p_bridge.socket, "socket", lambda: PeerSocket())
+    # Мост после сверки с рантаймом говорит только HMAC-фреймами (_request_peer);
+    # старый plaintext-обмен {"action": "status"} больше не поддерживается,
+    # поэтому здесь подменяется аутентифицированный запрос, а не сырой сокет.
+    requests = []
+
+    def request_peer(address, message, port=None):
+        requests.append((address, message))
+        return {"node_id": "remote-node", "hostname": "test-peer"}
+
     bridge = p2p_bridge.ArgosBridge.__new__(p2p_bridge.ArgosBridge)
     bridge.registry = p2p_bridge.NodeRegistry()
+    bridge.profile = type("Profile", (), {"node_id": "local-node"})()
+    bridge.port = bridge_port
+    bridge.bind_host = "192.0.2.1"
+    bridge._running = False
+    bridge.allowed_network = ipaddress.ip_network("192.0.2.0/24")
+    bridge._request_peer = request_peer
     autoconnect = peer_autoconnect.PeerAutoConnect(bridge)
 
     autoconnect._connect_all()
@@ -58,3 +67,4 @@ def test_autoconnect_probes_the_port_used_by_bridge(monkeypatch, tmp_path, bridg
     assert nodes[0]["node_id"] == "remote-node"
     assert nodes[0]["addr"] == peer_ip
     assert "🟢 connected" in autoconnect.status()
+    assert requests == [(peer_ip, {"action": "status"})]

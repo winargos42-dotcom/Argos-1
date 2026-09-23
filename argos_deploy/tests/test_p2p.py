@@ -224,7 +224,9 @@ class TestArgosBridge(unittest.TestCase):
         bridge = ArgosBridge(core=None)
 
         # Verify host/port attributes set in __init__
-        self.assertEqual(bridge.udp_host, "")
+        # Усиленный мост (сверка с рантаймом 2026-09-23): по умолчанию только loopback,
+        # а не "" (все интерфейсы).
+        self.assertEqual(bridge.udp_host, "127.0.0.1")
         self.assertEqual(bridge.udp_port, BROADCAST_PORT)
 
         # Verify that a socket with the expected options can be configured
