@@ -14,6 +14,8 @@ from src.argos_logger import get_logger
 from src.knowledge.vector_store import ArgosVectorStore
 
 log = get_logger("argos.memory")
+_MAX_DREAMER_FACTS = 3
+_SELF_GENERATED = ("dreamer", "learning")
 DB_PATH = "data/memory.db"
 
 
@@ -388,14 +390,15 @@ class ArgosMemory:
         hits = self.search_semantic(query, top_k=top_k)
         if not hits:
             return ""
+        min_score = float(os.getenv("ARGOS_RAG_MIN_SCORE", "0.3"))
         lines = ["[RAG: релевантные воспоминания]"]
         for item in hits:
             text = (item.get("text") or "").strip().replace("\n", " ")
             score = float(item.get("score", 0.0))
-            if not text:
+            if not text or score < min_score:
                 continue
             lines.append(f"  ({score:.2f}) {text[:220]}")
-        return "\n".join(lines)
+        return "\n".join(lines) if len(lines) > 1 else ""
 
     def get_all_facts(self, category: str = None) -> list:
         self._cleanup_noise()
@@ -418,10 +421,27 @@ class ArgosMemory:
         facts = self.get_all_facts()
         if not facts:
             return ""
+        # Последний вопрос/ответ уже есть в текущем диалоге; самоанализ dreamer и
+        # уроки сознания почти всегда повторяются — оставляем несколько свежих уникальных.
+        dialogue_echo = {"last_user_query", "last_argos_response"}
+        unique = {}
+        for cat, key, val, _ in facts:
+            if cat in _SELF_GENERATED:
+                norm = re.sub(r"^\s*\d+\.\s*", "", str(val)).strip().casefold().rstrip(".")
+                if norm and ((cat, norm) not in unique or key > unique[(cat, norm)]):
+                    unique[(cat, norm)] = key
+        keep_self = set()
+        for category in _SELF_GENERATED:
+            keys = sorted((k for (c, _), k in unique.items() if c == category), reverse=True)
+            keep_self.update((category, k) for k in keys[:_MAX_DREAMER_FACTS])
         lines = ["Известные факты о пользователе и системе:"]
         for cat, key, val, _ in facts[:60]:
+            if cat == "dialogue" and key in dialogue_echo:
+                continue
+            if cat in _SELF_GENERATED and (cat, key) not in keep_self:
+                continue
             lines.append(f"  [{cat}] {key}: {val}")
-        return "\n".join(lines)
+        return "\n".join(lines) if len(lines) > 1 else ""
 
     def fast_store(self, fact: str, category: str = "realtime") -> str:
         """
