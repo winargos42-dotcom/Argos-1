@@ -435,12 +435,14 @@ class ArgosMemory:
             keys = sorted((k for (c, _), k in unique.items() if c == category), reverse=True)
             keep_self.update((category, k) for k in keys[:_MAX_DREAMER_FACTS])
         lines = ["Известные факты о пользователе и системе:"]
-        for cat, key, val, _ in facts[:60]:
+        for cat, key, val, _ in facts:
             if cat == "dialogue" and key in dialogue_echo:
                 continue
             if cat in _SELF_GENERATED and (cat, key) not in keep_self:
                 continue
             lines.append(f"  [{cat}] {key}: {val}")
+            if len(lines) >= 61:  # Header plus at most 60 visible facts.
+                break
         return "\n".join(lines) if len(lines) > 1 else ""
 
     def fast_store(self, fact: str, category: str = "realtime") -> str:

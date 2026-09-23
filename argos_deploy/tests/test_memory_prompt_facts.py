@@ -38,3 +38,23 @@ def test_consciousness_lessons_are_capped_like_dreamer():
     text = facts_context(rows)
     assert text.count("[learning]") == 3
     assert "урок 109" in text and "урок 100" not in text
+
+
+def test_filtering_precedes_prompt_limit_with_many_generated_facts():
+    rows = [("dreamer", f"insight_{ts}", f"dream {ts}", "") for ts in range(1000, 1080)]
+    rows += [("learning", f"lesson_{ts}", f"lesson {ts}", "") for ts in range(2000, 2080)]
+    rows += [("user", "name", "Всеволод", "")]
+    text = facts_context(rows)
+    assert "[user] name: Всеволод" in text
+    assert text.count("[dreamer]") == 3
+    assert text.count("[learning]") == 3
+    assert "dream 1079" in text and "lesson 2079" in text
+    assert "dream 1000" not in text and "lesson 2000" not in text
+
+
+def test_prompt_limit_still_bounds_visible_facts_after_filtering():
+    rows = [("dialogue", "last_user_query", "echo", "")]
+    rows += [("user", f"fact_{i:03d}", f"value {i}", "") for i in range(100)]
+    text = facts_context(rows)
+    assert text.count("[user]") == 60
+    assert "fact_059:" in text and "fact_060:" not in text
