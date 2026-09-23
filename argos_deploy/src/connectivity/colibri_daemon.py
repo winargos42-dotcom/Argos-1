@@ -46,8 +46,6 @@ try:
         KS_MODE_THUMB,
         KS_ARCH_ARM64,
         KS_MODE_LITTLE_ENDIAN,
-        KS_ARCH_AVR,
-        KS_MODE_AVR32,
         KS_ARCH_MIPS,
         KS_MODE_MIPS32,
         KsError,
@@ -76,9 +74,12 @@ if HAVE_KS:
         "arm": (KS_ARCH_ARM, KS_MODE_ARM),
         "arm_thumb": (KS_ARCH_ARM, KS_MODE_THUMB),
         "arm64": (KS_ARCH_ARM64, KS_MODE_LITTLE_ENDIAN),
-        "avr": (KS_ARCH_AVR, KS_MODE_AVR32),
         "mips": (KS_ARCH_MIPS, KS_MODE_MIPS32),
     }
+    # AVR есть только в сборках Keystone из исходников, в PyPI 0.9.2 его нет
+    import keystone as _ks_mod
+    if hasattr(_ks_mod, "KS_ARCH_AVR"):
+        _KS_ARCHS["avr"] = (_ks_mod.KS_ARCH_AVR, _ks_mod.KS_MODE_AVR32)
 
 _CS_ARCHS: dict[str, tuple] = {}
 if HAVE_CS:
