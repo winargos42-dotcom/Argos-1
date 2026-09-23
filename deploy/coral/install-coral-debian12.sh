@@ -46,28 +46,31 @@ apt-get update
 apt-get install -y --no-install-recommends "linux-headers-$KREL" dkms build-essential \
   curl gnupg ca-certificates python3-venv python3-numpy python3-pil pciutils
 
-say "Репозиторий Coral (ключ в отдельном keyring, только для этого источника)"
-KEYRING=/usr/share/keyrings/coral-edgetpu.gpg
-if [ ! -s "$KEYRING" ]; then
-  curl -fsSL https://packages.cloud.google.com/apt/doc/apt-key.gpg | gpg --dearmor -o "$KEYRING.tmp"
-  mv "$KEYRING.tmp" "$KEYRING"
-fi
-echo "deb [signed-by=$KEYRING] https://packages.cloud.google.com/apt coral-edgetpu-stable main" \
-  > /etc/apt/sources.list.d/coral-edgetpu.list
-apt-get update
-
-say "Драйвер gasket/apex (DKMS) и libedgetpu1-std"
-if ! apt-get install -y gasket-dkms libedgetpu1-std; then
-  dkms status || true
-  die "gasket-dkms не собрался под $KREL. Не подбирай ядро наугад: собери DKMS-пакет из
+if dpkg-query -W -f='${Status}' gasket-dkms libedgetpu1-std 2>/dev/null | grep -c 'install ok installed' | grep -q 2; then
+  say "gasket-dkms и libedgetpu1-std уже установлены (образ Codex) — репозиторий и драйвер не трогаю"
+else
+  say "Репозиторий Coral (ключ в отдельном keyring, только для этого источника)"
+  if ! grep -qs coral-edgetpu-stable /etc/apt/sources.list.d/*.list; then
+    KEYRING=/usr/share/keyrings/coral-edgetpu.gpg
+    curl -fsSL https://packages.cloud.google.com/apt/doc/apt-key.gpg | gpg --dearmor -o "$KEYRING.tmp"
+    mv "$KEYRING.tmp" "$KEYRING"
+    echo "deb [signed-by=$KEYRING] https://packages.cloud.google.com/apt coral-edgetpu-stable main" \
+      > /etc/apt/sources.list.d/coral-edgetpu.list
+    apt-get update
+  fi
+  say "Драйвер gasket/apex (DKMS) и libedgetpu1-std"
+  if ! apt-get install -y gasket-dkms libedgetpu1-std; then
+    dkms status || true
+    die "gasket-dkms не собрался под $KREL. Не подбирай ядро наугад: собери DKMS-пакет из
 официального github.com/google/gasket-driver на ЗАКРЕПЛЁННОМ коммите (dpkg-buildpackage -us -uc -tc -b)
 и установи его, затем повтори этот скрипт."
+  fi
 fi
-dkms status | grep -i gasket || die "gasket нет в dkms status"
+modinfo -k "$KREL" apex >/dev/null || die "модуль apex не собран для $KREL (dkms status)"
 
 say "Доступ к /dev/apex_0 только группе apex"
 getent group apex >/dev/null || groupadd --system apex
-echo 'SUBSYSTEM=="apex", MODE="0660", GROUP="apex"' > /etc/udev/rules.d/65-apex.rules
+[ -f /etc/udev/rules.d/65-apex.rules ] || echo 'SUBSYSTEM=="apex", MODE="0660", GROUP="apex"' > /etc/udev/rules.d/65-apex.rules
 udevadm control --reload-rules
 modprobe gasket; modprobe apex
 udevadm trigger --subsystem-match=apex || true
