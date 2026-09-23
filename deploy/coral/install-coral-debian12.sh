@@ -85,10 +85,25 @@ install -d -m 755 /opt/argos-vision "$APP"
 install -d -m 750 -o argos-vision -g argos-vision /var/lib/argos-vision "$MODELS"
 install -d -m 750 /etc/argos
 
-say "Python: venv с системными numpy/Pillow + tflite-runtime $TFLITE_VERSION"
+say "libedgetpu: согласованная сборка feranick (стоковый 16.0 2021 несовместим с новым рантаймом)"
+# CPU без AVX2 (Sandy Bridge) не тянет колёса, собранные с AVX2, поэтому рантайм берём с PyPI (только AVX),
+# а libedgetpu — feranick под ту же линейку TF (ABI совместим с tflite 2.14).
+EDGE_DEB_URL="${ARGOS_LIBEDGETPU_URL:-https://github.com/feranick/libedgetpu/releases/download/v16.0TF2.15.1-1/libedgetpu1-std_16.0tf2.15.1-1.bookworm_amd64.deb}"
+if ! dpkg -s libedgetpu1-std 2>/dev/null | grep -q 'Version: 16.0tf'; then
+  tmp_deb="$(mktemp --suffix=.deb)"
+  curl -fsSL --retry 3 -o "$tmp_deb" "$EDGE_DEB_URL" || die "не скачался libedgetpu feranick"
+  dpkg -i "$tmp_deb" || apt-get -y -f install
+  rm -f "$tmp_deb"
+fi
+dpkg -s libedgetpu1-std | grep -i version
+
+say "Python: venv с системными numpy/Pillow + PyPI tflite-runtime $TFLITE_VERSION (AVX-only)"
 [ -x "$VENV/bin/python" ] || python3 -m venv --system-site-packages "$VENV"
-"$VENV/bin/pip" install --no-deps "tflite-runtime==$TFLITE_VERSION"
-"$VENV/bin/python" -c "import numpy; assert numpy.__version__.startswith('1.'), numpy.__version__"
+"$VENV/bin/pip" install "tflite-runtime==$TFLITE_VERSION"
+"$VENV/bin/python" -c "import numpy" 2>/dev/null || "$VENV/bin/pip" install numpy Pillow
+# Проверка, что рантайм вообще запускается на этом CPU (Illegal instruction = колесо с AVX2)
+"$VENV/bin/python" -c "from tflite_runtime.interpreter import Interpreter; print('tflite-runtime OK на этом CPU')" \
+  || die "tflite-runtime падает на этом CPU (нужно колесо без AVX2 — используй PyPI, не feranick-сборку)"
 
 say "Код сервиса"
 SRC="$HERE/../../argos_deploy/src/vision"
