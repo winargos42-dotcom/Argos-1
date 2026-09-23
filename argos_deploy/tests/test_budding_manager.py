@@ -23,6 +23,25 @@ def _import_manager():
             pytest.skip("BuddingManager недоступен")
 
 
+@pytest.fixture(autouse=True)
+def _no_real_networking():
+    """BuddingManager.__init__ unconditionally starts two real background
+    threads: a TCP listener bound to 0.0.0.0:<port+1000> and an ARP-scanning
+    loop. Every test in this file reuses port=5000, so the listeners race for
+    the same socket and the leaked threads can stall the process well past
+    normal test timeouts. Tests below exercise send_bud/find_soil/stop
+    directly (with their own mocking), not the real listener/scanner, so the
+    background threads add nothing but risk here."""
+    try:
+        from src.connectivity.budding_manager import BuddingManager
+    except ImportError:
+        yield
+        return
+    with patch.object(BuddingManager, "_start_bud_listener", lambda self: None), \
+            patch.object(BuddingManager, "_start_soil_search", lambda self: None):
+        yield
+
+
 # ── Базовые тесты ─────────────────────────────────────────────────────────────
 
 def test_import():
