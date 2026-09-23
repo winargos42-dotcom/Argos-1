@@ -1,6 +1,10 @@
 """
 wake_word.py -- Wake Word "Argos" voice activation.
-Backends: porcupine > vosk > speech_recognition > simulation.
+Backends: porcupine > vosk (офлайн, parecord/PipeWire) > speech_recognition > simulation.
+
+WakeWordListener(core, admin, flasher) — полный голосовой контур для ArgosCore:
+«Аргос» → команда (Vosk) → core.process_logic → ответ голосом (Piper).
+Работает только при ARGOS_VOICE=on: без явного включения микрофон не слушается.
 """
 
 import os, threading, time
@@ -63,7 +67,7 @@ class WakeWordDetector:
     def _pick_backend() -> str:
         if PORCUPINE_OK and os.getenv("PICOVOICE_ACCESS_KEY"):
             return "porcupine"
-        if VOSK_OK and AUDIO_OK:
+        if VOSK_OK and _offline_vosk_ready():
             return "vosk"
         if SR_OK:
             return "sr_google"
@@ -83,6 +87,9 @@ class WakeWordDetector:
 
     def stop(self) -> str:
         self._running = False
+        loop = getattr(self, "_vosk_loop", None)
+        if loop is not None:
+            loop.stop()
         return "Wake Word остановлен."
 
     def _loop(self):
@@ -120,28 +127,24 @@ class WakeWordDetector:
             self._loop_sr()
 
     def _loop_vosk(self):
-        model_path = os.getenv("VOSK_MODEL_PATH", "data/vosk-model-small-ru")
-        if not os.path.exists(model_path):
-            log.warning("Vosk model not found: %s -> sr_google", model_path)
-            self._backend = "sr_google"
-            self._loop_sr()
-            return
-        try:
-            model = VoskModel(model_path)
-            rec = KaldiRecognizer(model, 16000)
-            with _sd.RawInputStream(
-                samplerate=16000, blocksize=8000, dtype="int16", channels=1
-            ) as stream:
-                while self._running:
-                    data, _ = stream.read(8000)
-                    if rec.AcceptWaveform(bytes(data)):
-                        txt = rec.Result().lower()
-                        if any(w in txt for w in self._words):
-                            self._fire("vosk")
-        except Exception as e:
-            log.warning("Vosk: %s -> simulation", e)
+        from src.interface.offline_voice import VoskWakeLoop, get_stt
+
+        stt = get_stt()
+        if not stt.available:
+            log.warning("Vosk model not found: %s -> simulation", stt.model_path)
             self._backend = "simulation"
             self._loop_sim()
+            return
+        # Детектор только сигнализирует о wake word; команды обрабатывает WakeWordListener.
+        self._vosk_loop = VoskWakeLoop(
+            stt,
+            on_command=lambda _cmd: self._fire("vosk"),
+            on_wake=lambda: self._fire("vosk"),
+        )
+        self._vosk_loop.start()
+        while self._running and self._vosk_loop.running:
+            time.sleep(0.5)
+        self._vosk_loop.stop()
 
     def _loop_sr(self):
         if not SR_OK:
@@ -197,3 +200,91 @@ class WakeWordDetector:
 
 
 WakeWord = WakeWordDetector
+
+
+def _offline_vosk_ready() -> bool:
+    try:
+        from src.interface.offline_voice import get_stt
+        import shutil
+
+        recorder = any(shutil.which(p) for p in ("parecord", "pw-record", "arecord"))
+        return recorder and get_stt().available
+    except Exception:
+        return False
+
+
+class WakeWordListener:
+    """
+    Голосовой контур ArgosCore (интерфейс, который ожидает core.start_wake_word):
+      WakeWordListener(core, admin, flasher).start() / .stop() / .status()
+    «Аргос» → (короткое «Слушаю») → команда → core.process_logic → ответ голосом.
+    """
+
+    def __init__(self, core, admin=None, flasher=None, loop_factory=None):
+        self.core = core
+        self.admin = admin
+        self.flasher = flasher
+        self._loop_factory = loop_factory
+        self._loop = None
+        self.last_command: Optional[str] = None
+        self.last_answer: Optional[str] = None
+
+    @property
+    def running(self) -> bool:
+        return bool(self._loop and self._loop.running)
+
+    def _tts(self):
+        tts = getattr(self.core, "_offline_tts", None)
+        if tts is None:
+            from src.interface.offline_voice import get_tts
+
+            tts = get_tts()
+        return tts
+
+    def _on_wake(self) -> None:
+        try:
+            self._tts().speak("Слушаю")
+        except Exception as e:
+            log.debug("wake ack: %s", e)
+
+    def _on_command(self, text: str) -> None:
+        self.last_command = text
+        log.info("Голосовая команда: %s", text)
+        answer = ""
+        try:
+            result = self.core.process_logic(text, self.admin, self.flasher)
+            answer = result.get("answer", "") if isinstance(result, dict) else str(result or "")
+        except Exception as e:
+            answer = f"Ошибка обработки команды: {e}"
+            log.error("Voice command: %s", e)
+        self.last_answer = answer
+        # process_logic сам вызывает core.say() при voice_on; иначе озвучиваем явно.
+        if answer and not getattr(self.core, "voice_on", False):
+            self._tts().speak(answer)
+
+    def start(self) -> str:
+        from src.interface.offline_voice import VoskWakeLoop, get_stt, voice_enabled
+
+        if not voice_enabled():
+            return (
+                "🔇 Голосовой контур выключен (ARGOS_VOICE=off). "
+                "Включи ARGOS_VOICE=on в argos.env и перезапусти сервис."
+            )
+        if self.running:
+            return "Wake Word: уже запущен."
+        stt = get_stt()
+        if not stt.available:
+            return f"❌ Wake Word: нет модели Vosk ({stt.model_path}) или пакета vosk."
+        factory = self._loop_factory or VoskWakeLoop
+        self._loop = factory(stt, on_command=self._on_command, on_wake=self._on_wake, tts=self._tts())
+        self._loop.start()
+        return "👂 Wake Word активен (Vosk, офлайн). Скажи «Аргос» и команду."
+
+    def stop(self) -> str:
+        if self._loop is not None:
+            self._loop.stop()
+        return "Wake Word остановлен, микрофон закрыт."
+
+    def status(self) -> str:
+        detections = getattr(self._loop, "detections", 0) if self._loop else 0
+        return f"Wake Word: running={self.running} backend=vosk detected={detections}"

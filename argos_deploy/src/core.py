@@ -1729,8 +1729,18 @@ class ArgosCore:
     def start_wake_word(self, admin, flasher) -> str:
         try:
             from src.connectivity.wake_word import WakeWordListener
+            if self._wake is not None and getattr(self._wake, "running", False):
+                return "Wake Word: уже запущен."
             self._wake = WakeWordListener(self, admin, flasher)
             return self._wake.start()
+        except Exception as e:
+            return f"❌ Wake Word: {e}"
+
+    def stop_wake_word(self) -> str:
+        if self._wake is None:
+            return "Wake Word не запущен."
+        try:
+            return self._wake.stop()
         except Exception as e:
             return f"❌ Wake Word: {e}"
 
@@ -1738,23 +1748,55 @@ class ArgosCore:
     # ГОЛОС
     # ═══════════════════════════════════════════════════════
     def _init_voice(self):
-        if not PYTTSX3_OK:
-            log.warning("pyttsx3 не установлен: pip install pyttsx3")
-            return
+        # 1) Офлайн Piper/espeak-ng через PipeWire (Linux-десктоп)
+        self._offline_tts = None
         try:
-            self._tts_engine = pyttsx3.init()
-            for v in self._tts_engine.getProperty('voices'):
-                if "Russian" in v.name or "ru" in v.id:
-                    self._tts_engine.setProperty('voice', v.id)
-                    break
-            self._tts_engine.setProperty('rate', 175)
-            log.info("TTS: OK")
+            from src.interface.offline_voice import get_tts, voice_enabled
+
+            if voice_enabled():
+                self.voice_on = True
+            tts = get_tts()
+            if tts.available:
+                self._offline_tts = tts
+                log.info("TTS: %s (офлайн)", tts.backend)
         except Exception as e:
-            self._tts_engine = None
-            log.warning("TTS недоступен: %s", e)
+            log.warning("Офлайн TTS недоступен: %s", e)
+        # 2) Legacy pyttsx3
+        if self._offline_tts is None:
+            if not PYTTSX3_OK:
+                log.warning("TTS: нет Piper-модели/espeak-ng и pyttsx3 — голосовой вывод недоступен")
+            else:
+                try:
+                    self._tts_engine = pyttsx3.init()
+                    for v in self._tts_engine.getProperty('voices'):
+                        if "Russian" in v.name or "ru" in v.id:
+                            self._tts_engine.setProperty('voice', v.id)
+                            break
+                    self._tts_engine.setProperty('rate', 175)
+                    log.info("TTS: pyttsx3")
+                except Exception as e:
+                    self._tts_engine = None
+                    log.warning("TTS недоступен: %s", e)
+        # 3) Автозапуск wake word только при явном ARGOS_VOICE=on
+        try:
+            from src.interface.offline_voice import voice_enabled
+
+            if voice_enabled():
+                delay = float(os.getenv("ARGOS_VOICE_AUTOSTART_DELAY", "20") or 20)
+                timer = threading.Timer(delay, lambda: log.info(self.start_wake_word(None, None)))
+                timer.daemon = True
+                timer.start()
+        except Exception as e:
+            log.warning("Wake word autostart: %s", e)
 
     def say(self, text: str):
-        if not self.voice_on or not self._tts_engine:
+        if not self.voice_on:
+            return
+        offline = getattr(self, "_offline_tts", None)
+        if offline is not None:
+            offline.speak_async(text)
+            return
+        if not self._tts_engine:
             return
         def _speak():
             try:
@@ -1766,6 +1808,18 @@ class ArgosCore:
         threading.Thread(target=_speak, daemon=True).start()
 
     def listen(self) -> str:
+        # Офлайн Vosk (без облака) — приоритетно.
+        try:
+            from src.interface.offline_voice import get_stt
+
+            stt = get_stt()
+            if stt.available:
+                text = stt.listen(timeout=7, phrase_limit=15)
+                if text:
+                    log.info("Распознано (vosk): %s", text)
+                    return text.lower()
+        except Exception as e:
+            log.warning("Vosk STT: %s", e)
         if SR_OK:
             try:
                 rec = sr.Recognizer()
@@ -1832,16 +1886,30 @@ class ArgosCore:
             return ""
 
     def voice_services_report(self) -> str:
-        tts_ready = bool(PYTTSX3_OK and self._tts_engine)
-        stt_live_ready = bool(SR_OK)
-        stt_file_ready = bool(importlib.util.find_spec("faster_whisper"))
+        offline = {}
+        try:
+            from src.interface.offline_voice import status as _voice_status
+
+            offline = _voice_status()
+        except Exception:
+            offline = {}
+        offline_tts = offline.get("tts_backend", "none")
+        vosk_ready = offline.get("stt_backend") == "vosk"
+        tts_ready = bool(offline_tts != "none" or (PYTTSX3_OK and self._tts_engine))
+        tts_name = offline_tts if offline_tts != "none" else ("pyttsx3" if tts_ready else "—")
+        stt_live_ready = bool(vosk_ready or SR_OK)
+        stt_name = "vosk (офлайн)" if vosk_ready else ("SpeechRecognition" if SR_OK else "—")
+        stt_file_ready = bool(vosk_ready or importlib.util.find_spec("faster_whisper"))
         voice_mode = "ВКЛ" if self.voice_on else "ВЫКЛ"
+        wake = self._wake.status() if getattr(self, "_wake", None) and hasattr(self._wake, "status") else "не запущен"
+        mic_switch = "ВКЛ" if offline.get("voice_enabled") else "ВЫКЛ (ARGOS_VOICE=off)"
         return (
             "🎙 Проверка голосовых служб:\n"
-            f"• Голосовой вывод (TTS): {'✅ готов' if tts_ready else '❌ недоступен'}\n"
-            f"• Голосовой ввод (микрофон): {'✅ готов' if stt_live_ready else '❌ недоступен'}\n"
+            f"• Голосовой вывод (TTS): {'✅ готов' if tts_ready else '❌ недоступен'} [{tts_name}]\n"
+            f"• Голосовой ввод (микрофон): {'✅ готов' if stt_live_ready else '❌ недоступен'} [{stt_name}]\n"
             f"• Голосовой ввод (аудиофайлы): {'✅ готов' if stt_file_ready else '❌ недоступен'}\n"
-            f"• Текущий голосовой режим: {voice_mode}"
+            f"• Текущий голосовой режим: {voice_mode}\n"
+            f"• Микрофонный контур: {mic_switch}; wake word: {wake}"
         )
 
     # ═══════════════════════════════════════════════════════
@@ -4653,7 +4721,8 @@ class ArgosCore:
             return self._ai_modes_diagnostic()
 
         if getattr(self, "_homeostasis_block_heavy", False) and any(k in t for k in [
-            "посмотри на экран", "что на экране", "посмотри в камеру", "анализ фото",
+            "посмотри на экран", "что на экране", "посмотри в камеру", "что видит камера",
+            "что ты видишь", "анализ фото",
             "проанализируй изображение", "компиля", "compile", "прошей шлюз", "прошей gateway"
         ]):
             return "🔥 Гомеостаз: тяжёлая операция временно заблокирована (режим Protective/Unstable)."
@@ -5598,8 +5667,12 @@ class ArgosCore:
             if any(k in t for k in ["посмотри на экран", "что на экране", "скриншот"]):
                 question = text.replace("аргос","").replace("посмотри на экран","").replace("что на экране","").replace("скриншот","").strip()
                 return self.vision.look_at_screen(question or "Что происходит на экране?")
-            if any(k in t for k in ["посмотри в камеру", "что видит камера", "включи камеру"]):
-                question = text.replace("аргос","").replace("посмотри в камеру","").replace("что видит камера","").strip()
+            from src.vision import camera_intent, camera_question
+            _cam = camera_intent(t)
+            if _cam == "local" and hasattr(self.vision, "camera_report"):
+                return self.vision.camera_report()
+            if _cam:
+                question = camera_question(text)
                 return self.vision.look_through_camera(question or "Что ты видишь?")
             if "проанализируй изображение" in t or "анализ фото" in t:
                 path = text.split()[-1]
@@ -6017,6 +6090,8 @@ class ArgosCore:
             return f"🤖 Текущий режим ИИ: {self.ai_mode_label()}"
         if any(k in t for k in ["включи wake word", "wake word вкл"]):
             return self.start_wake_word(admin, flasher)
+        if any(k in t for k in ["выключи wake word", "wake word выкл", "перестань слушать"]):
+            return self.stop_wake_word()
 
         # ── Навыки ────────────────────────────────────────
         # ── Диагностика навыков ──────────────────────────────────────────
@@ -7234,7 +7309,7 @@ class ArgosCore:
 
 👁️ VISION (нужен Gemini API)
   посмотри на экран · что на экране
-  посмотри в камеру · анализ фото [путь]
+  посмотри в камеру · что ты видишь · камера статус · анализ фото [путь]
 
 🤖 АГЕНТ (цепочки задач)
   статус → затем крипто → потом дайджест
