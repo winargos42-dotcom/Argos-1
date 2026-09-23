@@ -330,8 +330,7 @@ class ClaudeTemplatesIntegrator:
     
     def _invoke_claude_agent(self, component: ClaudeComponent, query: str) -> str:
         """Вызов агента Claude через ARGOS."""
-        # Это заглушка - реальная интеграция будет через LLM API
-        return f"[Claude Agent: {component.name}]\nQuery: {query}\n\n{component.description}"
+        return f"[execution_not_configured] Claude Agent: {component.name}\nВызов не выполнен: подключение к исполнителю не настроено.\n{component.description}"
     
     def _integrate_commands(self):
         """Интеграция команд как инструментов."""
