@@ -30,6 +30,44 @@ NETWORK_SECRET = os.getenv("ARGOS_NETWORK_SECRET", "argos_default_secret")
 UDP_SOCKET_TIMEOUT = 0.1  # Таймаут recvfrom — держит цикл отзывчивым
 
 
+def p2p_bind_host() -> str:
+    """Адрес для bind UDP- и TCP-сокетов P2P (ARGOS_P2P_BIND).
+
+    Пусто (по умолчанию) — все интерфейсы, как раньше. "127.0.0.1" — только
+    локально (например, связь с KolibriOS в QEMU через slirp/hostfwd).
+    """
+    return (os.getenv("ARGOS_P2P_BIND", "") or "").strip()
+
+
+def parse_p2p_peers(raw: Optional[str] = None) -> list:
+    """Разбирает ARGOS_P2P_PEERS: "host:port,host:port" -> [(host, port), ...].
+
+    Порт по умолчанию — BROADCAST_PORT. Некорректные элементы пропускаются.
+    """
+    if raw is None:
+        raw = os.getenv("ARGOS_P2P_PEERS", "")
+    peers = []
+    for item in (raw or "").split(","):
+        item = item.strip()
+        if not item:
+            continue
+        host, sep, port = item.rpartition(":")
+        if not sep:
+            host, port = item, str(BROADCAST_PORT)
+        host = host.strip().strip("[]")
+        try:
+            port_num = int(port)
+        except ValueError:
+            continue
+        if host and 0 < port_num < 65536:
+            peers.append((host, port_num))
+    return peers
+
+
+def _is_loopback(host: str) -> bool:
+    return host.startswith("127.") or host in ("localhost", "::1")
+
+
 def p2p_protocol_roadmap() -> str:
     """Статус протокола и дорожная карта миграции на libp2p + ZKP."""
     return (
@@ -366,8 +404,12 @@ class ArgosBridge:
         self._running = False
         self._local_ip = self._get_local_ip()
         # Unified UDP discovery socket params (SO_REUSEADDR + SO_BROADCAST + bind + timeout)
-        self.udp_host = ""  # bind to all interfaces
+        self.udp_host = p2p_bind_host()  # "" = все интерфейсы (ARGOS_P2P_BIND)
+        self.tcp_host = self.udp_host  # TCP-сервер слушает тот же адрес
         self.udp_port = BROADCAST_PORT  # UDP discovery port
+        # Дополнительные unicast-адресаты ARGOS_HELLO (ARGOS_P2P_PEERS),
+        # например нода в QEMU, куда broadcast не доходит.
+        self.unicast_peers = parse_p2p_peers()
         # ГОСТ P2P безопасность
         try:
             from src.connectivity.gost_p2p import GostP2PSecurity
@@ -482,6 +524,7 @@ class ArgosBridge:
             now = time.time()
             # ── Broadcast heartbeat ──────────────────────────────
             if now - last_broadcast >= HEARTBEAT_SEC:
+                last_broadcast = now
                 try:
                     profile_data = self.profile.to_dict()
                     payload = json.dumps(
@@ -491,10 +534,20 @@ class ArgosBridge:
                             "sign": self._sign(profile_data),
                         }
                     ).encode()
-                    sock.sendto(payload, ("<broadcast>", self.udp_port))
-                    last_broadcast = now
                 except Exception:
-                    pass
+                    payload = None
+                if payload is not None:
+                    # broadcast с loopback-сокета невозможен — только unicast
+                    if not _is_loopback(self.udp_host):
+                        try:
+                            sock.sendto(payload, ("<broadcast>", self.udp_port))
+                        except Exception:
+                            pass
+                    for peer in self.unicast_peers:
+                        try:
+                            sock.sendto(payload, peer)
+                        except Exception:
+                            pass
             # ── Receive incoming discovery packets ───────────────
             try:
                 data, addr = sock.recvfrom(4096)
@@ -516,7 +569,7 @@ class ArgosBridge:
         srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         try:
-            srv.bind(("", P2P_PORT))
+            srv.bind((self.tcp_host, P2P_PORT))
             srv.listen(10)
         except Exception as e:
             print(f"[P2P TCP]: Не удалось открыть порт {P2P_PORT}: {e}")
