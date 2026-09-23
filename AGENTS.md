@@ -1,5 +1,24 @@
 # Memory
 
+## Session — 2026-09-23 (SPR2801: recovery audit after hardware loss)
+- Action: аудит git-истории (все 26 веток, включая `recovery/*`, `codex/*`) на предмет артефактов SPR2801 Linux-шима, задокументированных в записи "Session — 2026-06-26 (SPR2801 Linux shim)"
+- Результат:
+  - **Протокол и история сессий целы** — `AGENTS.md`, `vibe_context.md` закоммичены, восстановлению не подлежат (они уже в репозитории)
+  - **Реализация утрачена — не найдена НИ В ОДНОМ коммите ни одной ветки**: файлы никогда не были закоммичены в этот репозиторий, только упомянуты в логе
+    - `artifacts/spr2801_gti_shim/gti2800_xdma_shim.c`
+    - `artifacts/spr2801_gti_shim/spr2801_vendor_runner.cpp`
+    - `artifacts/spr2801_gti_shim/run_vendor_shim_dryrun.sh`
+    - `artifacts/spr2801_gti_shim/run_vendor_shim_live.sh`
+    - `artifacts/spr2801_gti_shim/LIVE_CHECKLIST.md`
+    - `reports/spr2801_gti_shim_latest.md`
+    - `scripts/spr2801_linux_lab_prepare.py`
+    - `scripts/spr2801_crash_audit.py`
+    - `scripts/spr2801_dump_prepare.py`
+    - `tests/test_spr2801_gti_shim_artifact.py`
+  - `src/mcp_api.py` (`_spr2801_linux_lab_command`, `_spr2801_crash_audit_command`, `_spr2801_dump_prepare_command`) до сих пор импортирует эти несуществующие модули из `scripts.*` — импорт обёрнут в `try/except`, поэтому не падает, а просто возвращает текст ошибки
+- Вероятная причина: файлы существовали только локально (скорее всего на ПК «Orion», `F:\debug\argoss`, где физически стоит плата SPR2801MCB), закоммитить их не успели до потери машины
+- Статус: **требуется реконструкция**. Спецификация для восстановления есть в записи "Session — 2026-06-26 (SPR2801 Linux shim)" ниже: подмена `/dev/gti2800-0`/`/dev/gti2803-0`, fake `mmap` shadow-buffer, live-режим за токеном `SPR2801_SHIM_LIVE=I_ACCEPT_LINUX_XDMA_LIVE`, dry-run baseline (`GtiCreateModel=ok`, `GtiEvaluate=ok`, 17 ioctl, 1461 H2C write/2.96MB, 16 C2H read/32KB). Стоит также проверить OneDrive `SharedMemory` и сам ПК Orion (если он не сгорел) — там могла остаться копия
+
 ## Session — 2026-06-27
 - Action: Деплой ARGOS Mini-App на GCP + фикс Telegram polling
 - Результат:
