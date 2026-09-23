@@ -16,6 +16,9 @@ import uvicorn
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from src.cloud_auth import CloudBearerAuthMiddleware
+from src.argos_network import install_network_routes
+
 _boot_time = time.time()
 _ready = False
 _init_error = None
@@ -34,6 +37,7 @@ _report_codex_status()
 
 # Lightweight app -- no heavy imports here
 app = FastAPI(title="Argos Cloud", version="2.1.3")
+app.add_middleware(CloudBearerAuthMiddleware)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -57,6 +61,9 @@ def root():
     return {"service": "argos-core", "ready": _ready}
 
 
+install_network_routes(app, health_provider=health)
+
+
 def _init_orchestrator():
     global _ready, _init_error
 
@@ -65,7 +72,7 @@ def _init_orchestrator():
         from dotenv import find_dotenv, load_dotenv
         env_path = find_dotenv(usecwd=True) or find_dotenv()
         if env_path:
-            load_dotenv(env_path, override=True)
+            load_dotenv(env_path, override=False)
 
         from src.persistent_state import prepare_persistent_state
 
