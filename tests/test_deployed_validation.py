@@ -1,9 +1,17 @@
 import importlib.util
 from pathlib import Path
+import shlex
 from types import SimpleNamespace
 
 import coverage
 import pytest
+
+
+@pytest.mark.parametrize("workflow", ["validate.yml", "ci.yml"])
+def test_control_integration_workflow_installs_its_http_dependencies(workflow):
+    source = (Path(__file__).parents[1] / ".github" / "workflows" / workflow).read_text()
+    install = next(line.split("pip install", 1)[1] for line in source.splitlines() if "pip install" in line)
+    assert {"aiohttp", "fastapi", "uvicorn"} <= set(shlex.split(install))
 
 
 @pytest.fixture

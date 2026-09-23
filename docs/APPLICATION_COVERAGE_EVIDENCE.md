@@ -1,8 +1,8 @@
 # Deployed application validation — 2026-09-20
 
-The complete `argos_deploy/src/**/*.py` tree measures **30.567399797711364% statement coverage**: **15,413 covered / 50,423 statements**, across **338 Python files**. The release threshold remains **30%**. Unimported namespace modules, platform modules and duplicate filenames remain in the denominator; no coverage omission was added.
+The complete `argos_deploy/src/**/*.py` tree measures **30.578250178472278% statement coverage**: **15,420 covered / 50,428 statements**, across **338 Python files**. The release threshold remains **30%**. Unimported namespace modules, platform modules and duplicate filenames remain in the denominator; no coverage omission was added.
 
-Validation completed with **1,418 unique application tests passed, 22 skipped and 2 subtests passed**. The separate repository utility suite passed **51 tests**. Skipped application checks remain skipped, not represented as validated behavior. This is offline application regression evidence, not a hardware, external-provider or production deployment certification.
+Validation completed with **1,424 unique application tests passed, 22 skipped and 2 subtests passed**. The separate repository utility suite passed **53 tests**. Skipped application checks remain skipped, not represented as validated behavior. This is offline application regression evidence, not a hardware, external-provider or production deployment certification.
 
 ## Reproduce in CI
 
