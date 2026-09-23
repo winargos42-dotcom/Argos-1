@@ -27,6 +27,7 @@ def test_arithmetic(text, expected):
 @pytest.mark.parametrize("text", [
     "2026", "-2026", "3.14", "", "Привет", "версия 2+2",
     "Расскажи про 2026 год", "argos status", "abc + 2",
+    "Сколько будет дней в неделе? Ответь числом.",
 ])
 def test_unrelated_text_is_not_intercepted(text):
     assert try_calculate(text) is None
