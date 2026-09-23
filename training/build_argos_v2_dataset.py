@@ -39,6 +39,7 @@ from argos_v2_seeds import PROBES, SEEDS, SYSTEM_PROMPT, TEST_SEEDS  # noqa: E40
 DEFAULT_SRC = "/home/.argos-storage/datasets"
 DEFAULT_OUT = "/home/.argos-storage/datasets/argos-v2"
 DAL_MAX_SHARE = 0.10
+TEMPLATE_MAX_SHARE = 0.25   # templated examples may be at most this share of train
 SEED_UPSAMPLE = 2          # hand-written seeds appear this many times in train
 TEST_POOL_SIZE = 60        # pool examples added to the held-out test on top of TEST_SEEDS
 VAL_SHARE = 0.05
@@ -110,6 +111,7 @@ _PREFIX_RE = re.compile(
 
 def clean_assistant(text: str) -> str:
     text = _PREFIX_RE.sub("", text.strip())
+    text = re.sub(r"\*\*([^*\n]+)\*\*", r"\1", text)          # bold → plain text (not a reason to drop)
     return re.sub(r"[ \t]+\n", "\n", text).strip()
 
 
@@ -139,7 +141,6 @@ USER_JUNK = [
                 r"шлюх\w*|пизд\w*|хуй\w*|хую|ебан\w*|бля\w*|жоп\w*|срак\w*|NSFW", re.I), "user_nsfw_or_profanity"),
     (re.compile(r"^Напиши отрывок из русской классической", re.I), "literature_excerpt_task"),
     (re.compile(r"\d\d:\d\d:\d\d\s*\[(INFO|WARNING|ERROR|DEBUG)\]|Traceback|self\.|def \w+\(|import \w+|=\s*\{", re.I), "user_code_or_log"),
-    (re.compile(r"AIza[0-9A-Za-z_\-]{20,}|\bsk-[A-Za-z0-9]{16,}|\bhf_[A-Za-z0-9]{20,}|\bghp_[A-Za-z0-9]{20,}"), "user_secret"),
     (re.compile(r"^/\w+|^(задача|эволюция|память|квантовое состояние|wg peers|wireguard статус|net_scanner|"
                 r"завтра состояние серверов|план генератор контента)\b", re.I), "user_bot_command"),
 ]
@@ -177,33 +178,60 @@ QUESTION_RE = re.compile(
     r"объясни|расскажи|опиши|напиши|переведи|посчитай|вычисли|назови|перечисли|сравни|подскажи|дай совет)\b", re.I)
 
 
-def filter_turn(user: str, assistant: str) -> str | None:
-    """Return a drop reason, or None if the turn is kept."""
+PII_RE = re.compile(
+    r"AIza[0-9A-Za-z_\-]{20,}|\bsk-[A-Za-z0-9_\-]{16,}|\bhf_[A-Za-z0-9]{20,}|\bgh[pousr]_[A-Za-z0-9]{20,}|"
+    r"\bxox[abp]-[A-Za-z0-9\-]{10,}|\b\d{8,10}:[A-Za-z0-9_\-]{30,}|"                       # Slack / Telegram bot tokens
+    r"\b[A-Za-z0-9+/]{42,43}=|PrivateKey|PublicKey|PresharedKey|BEGIN [A-Z ]*PRIVATE KEY|"  # WireGuard / PEM keys
+    r"\b(парол\w*|password|passwd|pwd|token|токен|secret|api[_ ]?key)\s*[:=]\s*\S+|"      # key=value secrets
+    r"(?<!\d)(\+7|8)[\s\-(]*\d{3}[\s\-)]*\d{3}[\s\-]*\d{2}[\s\-]*\d{2}(?!\d)|"            # RU phone numbers
+    r"\b[\w.+\-]+@(?!(example|noreply|anthropic)\.)[\w\-]+\.[\w.\-]+", re.I)            # e-mails (non-public)
+
+
+def all_reasons(user: str, assistant: str) -> list[str]:
+    """Every rule the turn violates, in priority order (first = primary drop reason). Empty = keep."""
+    r = []
+    if PII_RE.search(user) or PII_RE.search(assistant):
+        r.append("pii_or_secret")
     if meaningful(user) < 3:
-        return "user_too_short"
-    if meaningful(user) < 8 or not QUESTION_RE.search(user.strip()):
-        return "user_not_a_real_request"
+        r.append("user_too_short")
+    elif meaningful(user) < 8 or not QUESTION_RE.search(user.strip()):
+        r.append("user_not_a_real_request")
     if len(user) > MAX_USER_CHARS:
-        return "user_too_long_paste"
-    for rx, reason in USER_JUNK:
-        if rx.search(user):
-            return reason
+        r.append("user_too_long_paste")
+    r += [reason for rx, reason in USER_JUNK if rx.search(user)]
     if meaningful(assistant) < 2:
-        return "assistant_empty"
+        r.append("assistant_empty")
     if len(assistant) > MAX_ASSISTANT_CHARS:
-        return "assistant_too_long"
+        r.append("assistant_too_long")
     if cyr_ratio(assistant) < 0.6:
-        return "assistant_not_russian"
+        r.append("assistant_not_russian")
     if CODE_RE.search(assistant) and not ASKS_CODE_RE.search(user):
-        return "unrequested_code"
-    if assistant.count("#") >= 3 or assistant.count("**") >= 6:
-        return "heavy_markdown_report"
-    for rx, reason in ASSISTANT_JUNK:
-        if rx.search(assistant):
-            return reason
+        r.append("unrequested_code")
+    if len(re.findall(r"^#{1,6} ", assistant, re.M)) >= 2 or assistant.count("|---") >= 1:
+        r.append("heavy_markdown_report")
+    r += [reason for rx, reason in ASSISTANT_JUNK if rx.search(assistant)]
     if norm(assistant) == norm(user):
-        return "assistant_echoes_user"
-    return None
+        r.append("assistant_echoes_user")
+    return list(dict.fromkeys(r))
+
+
+def filter_turn(user: str, assistant: str) -> str | None:
+    """Primary drop reason, or None if the turn is kept."""
+    r = all_reasons(user, assistant)
+    return r[0] if r else None
+
+
+def category(user: str) -> str:
+    """Coarse content type of a row (for the statistics only)."""
+    if re.match(r"Tell me about:", user): return "file_dump"
+    if re.match(r"Что в таблице|Расскажи о: fact|Что ты знаешь о", user): return "memory_db_dump"
+    if re.search(r"argos \[system\]|долгосрочная память", user, re.I): return "system_log_as_user"
+    if re.match(r"Объясни важные факты проекта|Сохрани ключевой|Синхронизируй|Сделай краткую техническую", user): return "obsidian_note_task"
+    if re.match(r"Напиши отрывок", user): return "literature_excerpt"
+    if DAL_RE.search(user): return "dal_word"
+    if re.match(r"Расскажи о:", user): return "autolearn_wiki"
+    if cyr_ratio(user) < 0.5: return "english_command_or_code"
+    return "chat_turn"
 
 
 def dal_score(user: str, assistant: str) -> tuple:
@@ -336,35 +364,50 @@ def main():
 
     raw = collections.Counter()
     kept_by_src = collections.Counter()
-    drops = collections.Counter()
+    drops = collections.Counter()                                   # primary (first-matching) reason
     drops_by_src = collections.defaultdict(collections.Counter)
+    any_reason_by_src = collections.defaultdict(collections.Counter)  # every violated rule
+    sole_reason = collections.Counter()                             # rows that fail exactly ONE rule
+    categories = collections.defaultdict(collections.Counter)       # unique rows: category → kept/dropped
     drop_examples = collections.defaultdict(list)
+    dropped_by_src_examples = collections.defaultdict(list)
     seen = set()
     pool, dal = [], []
 
+    def drop(src, reason, turns=None):
+        drops[reason] += 1; drops_by_src[src][reason] += 1
+        if turns:
+            ex = {"src": src, "user": turns[0][0][:160], "assistant": turns[0][1][:200], "reason": reason}
+            if len(drop_examples[reason]) < 3:
+                drop_examples[reason].append(ex)
+            if len(dropped_by_src_examples[src.split(":")[0]]) < 5 and reason != "duplicate":
+                dropped_by_src_examples[src.split(":")[0]].append(ex)
+
     for src, messages in load_sources(args.src):
         raw[src] += 1
-        turns = to_turns(messages)
+        turns = [(u.strip(), clean_assistant(a)) for u, a in to_turns(messages)]
         if not turns:
-            drops["no_user_or_assistant"] += 1; drops_by_src[src]["no_user_or_assistant"] += 1
+            drop(src, "no_user_or_assistant")
             continue
-        cleaned, reason = [], None
-        for u, a in turns:
-            u, a = u.strip(), clean_assistant(a)
-            reason = filter_turn(u, a)
-            if reason:
-                break
-            cleaned.append(("user", u)); cleaned.append(("assistant", a))
-        if reason:
-            drops[reason] += 1; drops_by_src[src][reason] += 1
-            if len(drop_examples[reason]) < 3:
-                drop_examples[reason].append({"src": src, "user": turns[0][0][:160], "assistant": turns[0][1][:200]})
-            continue
-        k = key_of(cleaned)
-        if k in seen:
-            drops["duplicate"] += 1; drops_by_src[src]["duplicate"] += 1
+        k = key_of([x for t in turns for x in (("user", t[0]), ("assistant", t[1]))])
+        if k in seen:                       # dedup FIRST, so rule counts are over unique rows
+            drop(src, "duplicate")
             continue
         seen.add(k)
+        reasons = []
+        for u, a in turns:
+            reasons += all_reasons(u, a)
+        reasons = list(dict.fromkeys(reasons))
+        cat = category(turns[0][0])
+        categories[cat]["kept" if not reasons else "dropped"] += 1
+        for r_ in reasons:
+            any_reason_by_src[src][r_] += 1
+        if len(reasons) == 1:
+            sole_reason[reasons[0]] += 1
+        if reasons:
+            drop(src, reasons[0], turns)
+            continue
+        cleaned = [x for t in turns for x in (("user", t[0]), ("assistant", t[1]))]
         is_dal = DAL_RE.search(cleaned[0][1]) or DAL_SYSTEM_RE.search(system_of(messages))
         (dal if is_dal else pool).append((src, cleaned))
 
@@ -416,10 +459,23 @@ def main():
     n_val = max(50, int(len(rest) * VAL_SHARE))
     val, train = rest[:n_val], rest[n_val:]
     train = train + hand * SEED_UPSAMPLE
+    is_t = lambda x: x[0].startswith("seed:tmpl_")  # noqa: E731
+    non_t = [x for x in train if not is_t(x)]
+    t_rows = [x for x in train if is_t(x)]
+    t_max = int(TEMPLATE_MAX_SHARE / (1 - TEMPLATE_MAX_SHARE) * len(non_t))
+    drops["template_over_cap"] += max(0, len(t_rows) - t_max)
+    tmpl_used = t_rows[:t_max]
+    train = non_t + tmpl_used
+    dal_keys = {key_of(t) for _, t in dal_kept}
+    is_d = lambda x: key_of(x[1]) in dal_keys  # noqa: E731
+    d_rows = [x for x in train if is_d(x)]
+    d_max = int(DAL_MAX_SHARE / (1 - DAL_MAX_SHARE) * (len(train) - len(d_rows)))
+    drops["dal_over_cap"] += max(0, len(d_rows) - d_max)
+    train = [x for x in train if not is_d(x)] + d_rows[:d_max]
     rng.shuffle(train)
     test = test_seeds + test_pool
 
-    for s, _ in real + tmpl + hand:
+    for s, _ in real + tmpl_used + [x for x in val + test_pool if is_t(x)] + hand:
         kept_by_src[s] += 1
 
     os.makedirs(args.out, exist_ok=True)
@@ -447,6 +503,11 @@ def main():
         "drop_reasons": dict(drops.most_common()),
         "drop_reasons_by_source": {k: dict(v.most_common()) for k, v in drops_by_src.items()},
         "drop_examples": drop_examples,
+        "dropped_examples_by_source": dropped_by_src_examples,
+        "any_reason_by_source": {k: dict(v.most_common()) for k, v in any_reason_by_src.items()},
+        "sole_reason_counts": dict(sole_reason.most_common()),
+        "unique_row_categories": {k: dict(v) for k, v in categories.items()},
+        "unique_rows_total": len(seen),
     }
     with open(os.path.join(args.out, "stats.json"), "w", encoding="utf-8") as f:
         json.dump(stats, f, ensure_ascii=False, indent=2)
@@ -464,8 +525,17 @@ def main():
     print("\nSplits:", stats["split_sizes"])
     for name, c in split_by_src.items():
         print(f"  {name:5s}", dict(c.most_common()))
-    total_unique = len(real) + len(tmpl) + len(hand) + len(test_seeds)
-    print(f"\nUnique examples: {total_unique}; Dal share {len(dal_kept) / total_unique:.1%}")
+    n_real_train = sum(1 for x in train if not x[0].startswith("seed:"))
+    print(f"\nTrain composition: real {n_real_train} ({n_real_train / len(train):.0%}), "
+          f"of which Dal {sum(map(is_d, train))} ({sum(map(is_d, train)) / len(train):.0%}); "
+          f"templated {sum(map(is_t, train))} ({sum(map(is_t, train)) / len(train):.0%}); "
+          f"hand-written seeds {len(hand) * SEED_UPSAMPLE} rows ({len(hand) * SEED_UPSAMPLE / len(train):.0%})")
+    print(f"Unique rows across all sources before quality filters: {len(seen)}")
+    print("Unique rows by content type (kept/dropped):")
+    for c, v in sorted(categories.items(), key=lambda kv: -sum(kv[1].values())):
+        print(f"  {c:26s} kept {v.get('kept', 0):5d}  dropped {v.get('dropped', 0):5d}")
+    print("Rows failing exactly one rule (relaxing that single rule would add at most this many):",
+          dict(sole_reason.most_common(8)))
 
 
 if __name__ == "__main__":
