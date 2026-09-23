@@ -494,6 +494,19 @@ class ArgosCore:
         else:
             log.warning("Mind modules недоступны: %s", _mind_err_msg)
 
+        # [MIND] Сознание: самооценка диалогов, уроки, цели, метапознание.
+        # Работает без LLM-вызовов, поэтому не нагружает CPU-модель.
+        self.consciousness = None
+        if os.getenv("ARGOS_CONSCIOUSNESS", "on").strip().lower() not in ("0", "off", "false", "no"):
+            try:
+                from src.consciousness import ArgosConsciousness
+                ArgosConsciousness(self)  # привязывается как self.consciousness
+                self.consciousness.awaken()
+                log.info("Consciousness: OK")
+            except Exception as e:
+                self.consciousness = None
+                log.warning("Consciousness: %s", e)
+
         log.info("ArgosCore FINAL v2.0 инициализирован.")
 
     # ═══════════════════════════════════════════════════════
@@ -1646,6 +1659,12 @@ class ArgosCore:
         self.say(msg)
 
     def _remember_dialog_turn(self, user_text: str, answer: str, state: str):
+        consciousness = getattr(self, "consciousness", None)
+        if consciousness:
+            try:
+                consciousness.on_interaction(user_text, str(answer))
+            except Exception as e:
+                log.debug("Consciousness interaction: %s", e)
         if not self.memory:
             return
         try:
@@ -4655,6 +4674,18 @@ class ArgosCore:
         if getattr(self, "curiosity", None) and any(k in t for k in ["любопытство сейчас", "curiosity now"]):
             return self.curiosity.ask_now()
 
+
+        # [MIND] Команды сознания (кто я / интроспекция остаются за SelfModelV2)
+        consciousness = getattr(self, "consciousness", None)
+        if consciousness:
+            command = t.strip().rstrip("?!.")
+            if command in ("поток сознания", "последняя мысль", "цели", "воля", "мета-когниция",
+                           "обучение статус", "мета-обучение", "осознание"):
+                return consciousness.handle_command(command)
+            if command in ("разум статус", "статус разума"):
+                return consciousness.full_status()
+            if command.startswith("добавь цель "):
+                return consciousness.handle_command(command)
 
         # [MIND v2] Команды разума
         if any(w in t for w in ["кто я", "who am i", "самосознание", "интроспекция", "сознание статус", "статус сознания"]):
