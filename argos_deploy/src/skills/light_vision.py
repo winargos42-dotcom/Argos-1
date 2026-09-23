@@ -55,8 +55,15 @@ def _ha_request(method: str, path: str, payload: dict | None = None):
     return resp.json()
 
 
+_NAMES: dict[str, str] = {}  # entity_id → название из HA («Свет кухня» → «кухня»)
+
+
 def ha_state(entity: str) -> str:
-    return _ha_request("GET", f"states/{entity}")["state"]
+    data = _ha_request("GET", f"states/{entity}")
+    name = (data.get("attributes") or {}).get("friendly_name") or ""
+    if name and not re.search(r"switch|gang", name, re.I):
+        _NAMES[entity] = re.sub(r"^свет\s+", "", name, flags=re.I)
+    return data["state"]
 
 
 def ha_switch(entity: str, on: bool) -> None:
@@ -77,6 +84,8 @@ def measure_brightness(core=None) -> float:
 
 
 def _short(entity: str) -> str:
+    if entity in _NAMES:
+        return _NAMES[entity]
     match = re.search(r"(\d+)$", entity)
     return f"канал {match.group(1)}" if match else entity
 

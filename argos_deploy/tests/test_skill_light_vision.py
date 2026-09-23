@@ -12,6 +12,7 @@ CAL = {"time": "2026-09-24 03:25", "dark": 7.0,
 
 @pytest.fixture(autouse=True)
 def calib_path(tmp_path, monkeypatch):
+    lv._NAMES.clear()
     monkeypatch.setenv("ARGOS_LIGHT_CALIBRATION", str(tmp_path / "cal.json"))
     monkeypatch.delenv("ARGOS_LIGHT_SWITCHES", raising=False)
 
@@ -106,3 +107,10 @@ def test_handle_routes(monkeypatch):
     called = {}
     monkeypatch.setattr(lv, "calibrate", lambda core=None: called.setdefault("cal", CAL))
     assert lv.handle("калибровка света").startswith("💡 Калибровка света") and called
+
+
+def test_room_names_from_ha(monkeypatch):
+    monkeypatch.setattr(lv, "_ha_request", lambda m, p, d=None: {
+        "state": "on", "attributes": {"friendly_name": "Свет кухня"}})
+    assert lv.ha_state(CH[0]) == "on"
+    assert "горит кухня" in lv.assess(137.0, states(1), CAL)
