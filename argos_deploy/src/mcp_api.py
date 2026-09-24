@@ -84,6 +84,20 @@ class ArgosMCPServer:
         """Async version: runs command without creating new event loop."""
         if not text.strip():
             return "empty command"
+        runner = getattr(self, "task_runner", None)
+        if runner is not None:
+            import asyncio
+            from src.task_runtime import TERMINAL
+            try:
+                task = runner.submit(text)
+            except (ValueError, RuntimeError) as exc:
+                return f"Ошибка: {exc}"
+            while task["status"] not in TERMINAL:
+                await asyncio.sleep(0.1)
+                task = runner.get(task["id"])
+                if task is None:
+                    return "Ошибка: история задачи недоступна"
+            return task["answer"]
         if self.core and hasattr(self.core, "process_logic_async"):
             try:
                 # Use await directly since we're already in async context

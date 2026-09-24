@@ -1,3 +1,29 @@
+# Session — 2026-09-23 Local media recovery
+
+Installed media/P2P recovery preserved in an isolated branch; eleven focused test files pass. Truthful Claude template errors are source-only pending runtime install. Railway deployment rejected: trial expired. GCP login pending. See `02 Logs/2026-09-23_LocalMediaRecovery.md`.
+
+# Session — 2026-09-19 Roadmap continuation
+
+User requests all remaining stages autonomously. Implemented whole-memory index, separate facts, durable queue, streaming/cancellation, authenticated Russian /ui, shared MCP execution, and hash-checked local release/rollback utility. Browser desktop/mobile and focused tests passed; whole-application coverage30.5674% (1418passed/22skipped), root51passed; local b2ff627 installed and live API/browser passed; basic model factual answer failed and is under diagnosis. See `02 Logs/2026-09-19_RoadmapCompletion.md` and `docs/ARGOS_LOCAL_OPERATOR.md`. Cloudflare OAuth expired without owner callback; domain404, Railway still old version, target boards absent. Do not claim full completion.
+
+# Session — 2026-09-19 Core correctness
+
+The owner said to begin executing the roadmap. The first iteration implements bounded arithmetic without a model, direct file commands with exact paths/content, success/failure/unverified outcomes, truthful agent/planner reports, and explicit Ollama input-overflow rejection. Independent review defects were corrected. Final local checks: 412 tests +2 subtests passed; 802 source files passed syntax. Seven runtime files deployed with rollback copy; health ready, arithmetic/create/read/missing-file MCP checks passed. Live overflow probe returned HTTP400 in 4.925s. Full details: `02 Logs/2026-09-19_CoreCorrectness.md`. Exact token reserve, application coverage30%, broader memory/UI/cloud work remain next stages. This is not full release readiness.
+
+# Current session — Local refinement, 2026-09-19
+
+Worktree `/root/argos-improve` builds on the exact PR #14 recovery tree; `/root/argos-recovery` files preserved. MemPalace now limits unique terms after deduplication. Ollama retains a single generated identity anchor and places fixed rules before current status/history, preserving all unique context. Tests: helpers191 + runtime/Ollama79 + root22 =292, plus2subtests; independent review PASS. Runtime files updated with rollback copies in `/root/argos-runtime/backups/refinement-20260919T222128Z`; post-restart health ready=true. Observed Ollama truncation at2048; local model/server context now4096, provider/controller timeouts600/660s, input2259 accepted whole. See `02 Logs/2026-09-19_LocalRefinement.md` for runtime measurements and final delivery evidence. Existing release coverage and cloud-access gaps remain.
+
+---
+
+# Current session — Linux recovery, 2026-09-19
+
+Runtime /root/argos-runtime; source /root/argos-recovery. User services argos-local/argos-ollama enabled, linger=yes. Model argos-local (qwen2.5:1.5b, context2048/output128); loopback ports8080/11434. Authenticated end-to-end core query returned4; first long-context reply can take minutes on this CPU. Verified backups /root/argos-recovery-artifacts; 92918 MemPalace drawers with separate readonly runtime copy.
+
+Reviewed P2P, recovered memory context and platform fixes. Helper184 + 2 subtests, root22, runtime69. Release coverage unresolved. Cloudflare OAuth pending; HF read-only; Railway old Aug10 deployment. See 02 Logs/2026-09-19_LinuxRecovery.md.
+
+---
+
 # Session summary — 2026-09-18
 
 Latest published checkpoint: Gist and legacy recovery repair `69bafe4631e98ba83e6fccd0ab8b0b038e97aa19` is applied to main. Hosted Python 3.10 run `35336550117` succeeded; branch run `35336476602` proved 786 syntax checks and 190 selected tests. The current follow-up repairs Gemini/Hugging Face integration and records a recovered memory snapshot.

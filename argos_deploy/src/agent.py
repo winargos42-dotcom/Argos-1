@@ -19,6 +19,8 @@ from typing import Any, Callable, Dict, List, Optional
 
 from src.argos_logger import get_logger
 from src.agent_guard import AgentGuard
+from src.execution_outcome import classify_execution
+from src.task_control import TaskCancelled
 
 log = get_logger("argos.agent")
 
@@ -157,6 +159,7 @@ class ArgosAgent:
             "started_at": None,
             "tasks_done": 0,
             "errors": 0,
+            "unverified": 0,
             "last_task": None,
         }
 
@@ -173,16 +176,13 @@ class ArgosAgent:
         self._sub_agency = manager
         log.info("ArgosAgent: SubAgencyManager подключён (%d субагентств)", len(manager._agents))
 
-    def _execute_step(self, step: str, admin, flasher) -> str:
+    def _execute_step(self, step: str, admin, flasher) -> object:
         """Выполнить один шаг плана: сначала через суб-агентство, затем через core."""
         if self._sub_agency is not None:
             sub_result = self._sub_agency.dispatch(step)
             if sub_result is not None:
                 return sub_result
-        res = self.core.process_logic(step, admin, flasher)
-        if isinstance(res, dict):
-            return res.get("answer", "")
-        return str(res)
+        return self.core.process_logic(step, admin, flasher)
 
     # ──────────────────────────────────────────────────────────────
     # EXECUTE_PLAN — синхронный парсинг текстовой цепочки
@@ -216,7 +216,7 @@ class ArgosAgent:
             decision = self._guard.validate_step(step)
             if not decision.allowed:
                 results.append(f"\n📍 Шаг {i}/{len(steps)}: BLOCKED [{decision.reason}]")
-                self._results.append({"step": step, "result": f"BLOCKED:{decision.reason}", "ok": False})
+                self._results.append({"step": step, "result": f"BLOCKED:{decision.reason}", "ok": False, "status": "failed"})
                 continue
             step = decision.sanitized
 
@@ -224,23 +224,30 @@ class ArgosAgent:
             log.info("Шаг %d: %s", i, step)
 
             try:
-                answer = self._execute_step(step, admin, flasher)[:300]
-                results.append(f"   ✅ {answer}")
-                self._results.append({"step": step, "result": answer, "ok": True})
+                answer, status = classify_execution(self._execute_step(step, admin, flasher))
+                answer = answer[:300]
+                icon = {"succeeded": "✅", "failed": "❌", "unverified": "❔"}[status]
+                results.append(f"   {icon} {answer or 'Результат отсутствует'}")
+                self._results.append({"step": step, "result": answer, "ok": status == "succeeded", "status": status})
+            except TaskCancelled:
+                self._running = False
+                raise
             except Exception as e:
                 err = str(e)
                 results.append(f"   ❌ Ошибка: {err}")
-                self._results.append({"step": step, "result": err, "ok": False})
+                self._results.append({"step": step, "result": err, "ok": False, "status": "failed"})
                 log.error("Шаг %d ошибка: %s", i, err)
 
             time.sleep(0.5)
 
         self._running = False
         ok_count = sum(1 for r in self._results if r["ok"])
-        fail_count = len(self._results) - ok_count
+        fail_count = sum(r["status"] == "failed" for r in self._results)
+        unverified_count = sum(r["status"] == "unverified" for r in self._results)
 
         results.append(f"\n━━━━━━━━━━━━━━━━━━━━━━━━━━")
-        results.append(f"🤖 ПЛАН ВЫПОЛНЕН: ✅ {ok_count} / ❌ {fail_count}")
+        label = "ПЛАН ВЫПОЛНЕН" if ok_count == len(steps) else "ИТОГ ПЛАНА"
+        results.append(f"🤖 {label}: ✅ {ok_count} / ❌ {fail_count} / ❔ {unverified_count}")
         return "\n".join(results)
 
     def _parse_steps(self, text: str) -> list:
@@ -261,7 +268,7 @@ class ArgosAgent:
             return "📭 Агент ещё не запускался."
         lines = ["📋 ПОСЛЕДНИЙ ОТЧЁТ АГЕНТА:"]
         for i, r in enumerate(self._results, 1):
-            icon = "✅" if r["ok"] else "❌"
+            icon = "✅" if r["ok"] else ("❔" if r.get("status") == "unverified" else "❌")
             lines.append(f"  {icon} Шаг {i}: {r['step'][:50]}")
             lines.append(f"      → {r['result'][:100]}")
         return "\n".join(lines)
@@ -289,6 +296,7 @@ class ArgosAgent:
         self._report["started_at"] = time.time()
         self._report["tasks_done"] = 0
         self._report["errors"] = 0
+        self._report["unverified"] = 0
 
         self._thread = threading.Thread(
             target=self._execute_chain,
@@ -307,19 +315,20 @@ class ArgosAgent:
             try:
                 self._report["last_task"] = task
                 result = self.core.process(task)
-                answer = (
-                    result.get("answer", str(result)) if isinstance(result, dict) else str(result)
-                )
-                self._chain_results.append({"task": task, "result": answer, "ok": True})
-                self._report["tasks_done"] += 1
-                if callback:
-                    callback(task, answer)
+                answer, status = classify_execution(result)
+                self._chain_results.append({"task": task, "result": answer, "ok": status == "succeeded", "status": status})
+                counter = {"succeeded": "tasks_done", "failed": "errors", "unverified": "unverified"}[status]
+                self._report[counter] += 1
             except Exception as e:
                 err = str(e)
-                self._chain_results.append({"task": task, "result": err, "ok": False})
+                self._chain_results.append({"task": task, "result": err, "ok": False, "status": "failed"})
                 self._report["errors"] += 1
-                if callback:
-                    callback(task, f"❌ {err}")
+                answer = f"❌ {err}"
+            if callback:
+                try:
+                    callback(task, answer)
+                except Exception:
+                    log.warning("Не удалось передать результат задачи обработчику")
             time.sleep(0.3)
 
         self._running = False
@@ -441,13 +450,14 @@ class ArgosAgent:
             f"  Статус: {status}{elapsed}",
             f"  Задач выполнено: {self._report['tasks_done']}",
             f"  Ошибок: {self._report['errors']}",
+            f"  Без подтверждения: {self._report['unverified']}",
             f"  Последняя задача: {self._report['last_task'] or '—'}",
         ]
 
         if self._chain_results:
             lines.append("  Результаты (последние 5):")
             for r in self._chain_results[-5:]:
-                icon = "✅" if r["ok"] else "❌"
+                icon = "✅" if r["ok"] else ("❔" if r.get("status") == "unverified" else "❌")
                 lines.append(f"    {icon} {r['task'][:40]} → {r['result'][:60]}")
 
         with self._reminder_lock:

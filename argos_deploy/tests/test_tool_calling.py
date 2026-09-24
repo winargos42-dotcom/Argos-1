@@ -41,7 +41,7 @@ def test_tool_calling_multi_turn_stops_on_confident_final_answer(monkeypatch):
 
     result = engine.try_handle("проверь статус", admin=SimpleNamespace(get_stats=lambda: "stats"), flasher=None)
 
-    assert result == "Готово"
+    assert result == "[get_system_stats]: CPU ok"
     assert executed == [("get_system_stats", {})]
     assert len(calls) == 2
     assert calls[1][1] == [{"tool": "get_system_stats", "arguments": {}, "result": "CPU ok"}]

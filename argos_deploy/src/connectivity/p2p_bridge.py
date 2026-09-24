@@ -16,6 +16,11 @@ import platform
 import psutil
 import datetime
 import requests
+import ipaddress
+import http.client
+import re
+import logging
+from .p2p_auth import Auth, load_key, send_frame, recv_frame, canonical
 from typing import Optional
 
 from src.connectivity.redis_bus import RedisBus
@@ -26,8 +31,59 @@ BROADCAST_PORT = int(os.getenv("ARGOS_P2P_BROADCAST_PORT", "55772"))  # Порт
 HEARTBEAT_SEC = 15  # Пульс каждые N секунд
 NODE_TIMEOUT = 45  # Нода считается мёртвой через N секунд
 VERSION = "1.0.0"
-NETWORK_SECRET = os.getenv("ARGOS_NETWORK_SECRET", "argos_default_secret")
+NETWORK_SECRET = None  # No legacy/default credential; loaded privately on explicit start/client call.
 UDP_SOCKET_TIMEOUT = 0.1  # Таймаут recvfrom — держит цикл отзывчивым
+
+log = logging.getLogger("argos.p2p")
+
+
+def _env(*names: str) -> str:
+    """Первое непустое значение из списка переменных окружения (обрезанное)."""
+    for name in names:
+        value = (os.getenv(name, "") or "").strip()
+        if value:
+            return value
+    return ""
+
+
+def p2p_bind_host() -> str:
+    """Адрес bind TCP- и UDP-сокетов P2P.
+
+    ARGOS_P2P_BIND_HOST (основное имя) или ARGOS_P2P_BIND (совместимый алиас).
+    По умолчанию — 127.0.0.1: слушать все интерфейсы без явной настройки
+    небезопасно; адрес должен лежать внутри ARGOS_P2P_ALLOWED_SUBNET.
+    """
+    return _env("ARGOS_P2P_BIND_HOST", "ARGOS_P2P_BIND") or "127.0.0.1"
+
+
+def parse_p2p_peers(raw: Optional[str] = None) -> list:
+    """Разбирает ARGOS_P2P_PEERS: "host:port,host:port" -> [(host, port), ...].
+
+    Порт по умолчанию — BROADCAST_PORT. Некорректные элементы пропускаются.
+    Отправка идёт только адресатам внутри ARGOS_P2P_ALLOWED_SUBNET (см. ArgosBridge).
+    """
+    if raw is None:
+        raw = os.getenv("ARGOS_P2P_PEERS", "")
+    peers = []
+    for item in (raw or "").split(","):
+        item = item.strip()
+        if not item:
+            continue
+        host, sep, port = item.rpartition(":")
+        if not sep:
+            host, port = item, str(BROADCAST_PORT)
+        host = host.strip().strip("[]")
+        try:
+            port_num = int(port)
+        except ValueError:
+            continue
+        if host and 0 < port_num < 65536:
+            peers.append((host, port_num))
+    return peers
+
+
+def _is_loopback(host: str) -> bool:
+    return host.startswith("127.") or host in ("localhost", "::1")
 
 
 def p2p_protocol_roadmap() -> str:
@@ -259,6 +315,8 @@ class TaskDistributor:
     def __init__(self, registry: NodeRegistry, self_profile: NodeProfile):
         self.registry = registry
         self.me = self_profile
+        self.request_peer = None
+        self.query_local = None
 
     def _infer_task_type(self, prompt: str) -> str:
         low = (prompt or "").lower()
@@ -320,421 +378,385 @@ class TaskDistributor:
         node = decision["node"]
 
         if decision["is_local"]:
-            if core:
-                res = (
-                    core._ask_gemini("Ты Аргос.", prompt)
-                    or core._ask_ollama("Ты Аргос.", prompt)
-                    or "Нет ответа от ИИ."
-                )
-                return f"[LOCAL:{resolved_type}] {res}"
-            return "[LOCAL] Ядро не подключено."
+            if self.query_local is None:
+                return "[LOCAL] Bounded inference adapter unavailable"
+            result = self.query_local(prompt)
+            return f"[LOCAL:{resolved_type}] " + str(result.get('answer', result.get('error', 'No answer')))
 
-        # Запрос к удалённой ноде через TCP JSON протокол
-        addr = node.get("addr", "")
+        if self.request_peer is None:
+            return "[ROUTE FAIL] Authenticated transport unavailable"
         try:
-            sock = socket.socket()
-            sock.settimeout(20)
-            sock.connect((addr, P2P_PORT))
-            sock.sendall(
-                json.dumps(
-                    {
-                        "action": "query",
-                        "prompt": prompt,
-                        "task_type": resolved_type,
-                        "secret": NETWORK_SECRET,
-                    }
-                ).encode()
-            )
-            raw = sock.recv(65536)
-            sock.close()
-            data = json.loads(raw.decode() or "{}")
-            answer = data.get("answer", "Нет ответа")
-            return f"[{node['hostname']}:{resolved_type}] {answer}"
-        except Exception as e:
-            return f"[ROUTE FAIL] {e}"
+            data = self.request_peer(node.get("addr", ""), {"action": "query", "prompt": prompt},
+                                     port=node.get("port", P2P_PORT))
+            if "answer" not in data:
+                return "[ROUTE FAIL] " + str(data.get("error", "No answer"))
+            return f"[{node.get('hostname', 'peer')}:{resolved_type}] {data['answer']}"
+        except Exception:
+            return "[ROUTE FAIL] Authenticated peer unavailable"
 
 
 # ═══════════════════════════════════════════════════════════
 # P2P МОСТ — сервер + клиент + пульс
 # ═══════════════════════════════════════════════════════════
 class ArgosBridge:
+    """LAN-only authenticated status/discovery and bounded local-Ollama inference.
+
+    Shared-key membership is not per-node identity or encryption. No skill transfer,
+    arbitrary commands, remote Python imports, Redis auto-start, or WAN discovery.
+    """
     def __init__(self, core=None):
         self.core = core
         self.profile = NodeProfile()
         self.registry = NodeRegistry()
         self.distributor = TaskDistributor(self.registry, self.profile)
+        self.distributor.request_peer = self._request_peer
+        self.distributor.query_local = self._query_local
         self._running = False
-        self._local_ip = self._get_local_ip()
-        # Unified UDP discovery socket params (SO_REUSEADDR + SO_BROADCAST + bind + timeout)
-        self.udp_host = ""  # bind to all interfaces
-        self.udp_port = BROADCAST_PORT  # UDP discovery port
-        # ГОСТ P2P безопасность
+        self._auth = None
+        self._lifecycle = threading.RLock()
+        self._stop = threading.Event()
+        self._threads = []
+        self._clients = set()
+        self._client_lock = threading.Lock()
+        self._slots = threading.BoundedSemaphore(4)
+        self._outbound_slots = threading.BoundedSemaphore(4)
+        self._tcp = self._udp = None
+        # ARGOS_P2P_BIND / ARGOS_P2P_PEERS (коммит 78ec305) — совместимые алиасы
+        # поверх усиленных имён ARGOS_P2P_BIND_HOST / ARGOS_P2P_DISCOVERY_*.
+        self.bind_host = p2p_bind_host()
+        self.port = int(os.getenv('ARGOS_P2P_PORT', str(P2P_PORT)))
+        self.udp_host = _env('ARGOS_P2P_DISCOVERY_BIND') or self.bind_host
+        self.udp_port = int(os.getenv('ARGOS_P2P_BROADCAST_PORT', str(BROADCAST_PORT)))
+        self.allowed_network = ipaddress.ip_network(os.getenv('ARGOS_P2P_ALLOWED_SUBNET', '127.0.0.0/24'))
+        self.discovery_target = _env('ARGOS_P2P_DISCOVERY_TARGET') or self.bind_host
+        # Дополнительные unicast-адресаты подписанного discovery (например, нода
+        # в QEMU за slirp, куда broadcast не доходит). Адреса вне разрешённой
+        # подсети молча пропускаются при отправке.
+        self.unicast_peers = parse_p2p_peers()
+        self._local_ip = self.bind_host
+        self.redis_bus = None  # Legacy unsigned Redis registry path deliberately unavailable.
+
+    @property
+    def tcp_host(self):
+        """Совместимость с 78ec305: TCP-сервер слушает bind_host."""
+        return self.bind_host
+
+    def _get_local_ip(self):
+        return self.bind_host
+
+    def _discovery_targets(self):
+        targets = [(self.discovery_target, self.udp_port)]
+        for peer in self.unicast_peers:
+            if self._allowed(peer[0]) and peer not in targets:
+                targets.append(peer)
+        return targets
+
+    def _ensure_auth(self):
+        if self._auth is None:
+            self._auth = Auth(load_key())
+        return self._auth
+
+    def _allowed(self, address):
         try:
-            from src.connectivity.gost_p2p import GostP2PSecurity
+            ip = ipaddress.ip_address(address)
+            return ip.version == 4 and ip in self.allowed_network
+        except ValueError:
+            return False
 
-            self._gost = GostP2PSecurity(secret=NETWORK_SECRET)
-        except Exception:
-            self._gost = None
+    def _config_guard(self):
+        if not self.allowed_network.is_private or self.allowed_network.prefixlen < 16:
+            raise ValueError('P2P requires a narrow private IPv4 subnet')
+        if not self._allowed(self.bind_host) or not self._allowed(self.discovery_target):
+            raise ValueError('P2P endpoint outside allowed LAN')
+        if self.udp_host not in ('0.0.0.0', self.bind_host):
+            raise ValueError('Unexpected discovery bind')
+        if not (1 <= self.port <= 65535 and 1 <= self.udp_port <= 65535):
+            raise ValueError('Invalid P2P port')
 
-        # Optional Redis pub/sub transport
-        self.redis_url = os.getenv("REDIS_URL", "").strip()
-        self.redis_host = os.getenv("REDIS_HOST", "").strip()
-        self.redis_port = int(os.getenv("REDIS_PORT", "6379") or "6379")
-        self.redis_password = os.getenv("REDIS_PASSWORD", "") or None
-        self.redis_prefix = os.getenv("REDIS_CHANNEL_PREFIX", "argos")
-        self.redis_bus = None
-        if self.redis_url or self.redis_host:
+    def start(self):
+        with self._lifecycle:
+            if self._running:
+                return self.network_status()
+            # Validate current provisioning even when a client initialized auth earlier.
             try:
-                self.redis_bus = RedisBus(
-                    redis_url=self.redis_url or None,
-                    host=self.redis_host,
-                    port=self.redis_port,
-                    password=self.redis_password,
-                    prefix=self.redis_prefix,
-                )
-                self.redis_bus.register("state", self._on_redis_state)
-            except Exception:
-                self.redis_bus = None
-
-    def _get_local_ip(self) -> str:
-        try:
-            s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-            s.connect(("8.8.8.8", 80))
-            ip = s.getsockname()[0]
-            s.close()
-            return ip
-        except Exception:
-            return "127.0.0.1"
-
-    def _sign(self, data: dict) -> str:
-        """ГОСТ HMAC-Стрибог-256 подпись (замена SHA-256)."""
-        if self._gost:
-            return self._gost.sign(data)
-        # Fallback: SHA-256 если ГОСТ недоступен
-        raw = json.dumps(data, sort_keys=True) + NETWORK_SECRET
-        return hashlib.sha256(raw.encode()).hexdigest()[:16]
-
-    def _verify_sign(self, data: dict, signature: str) -> bool:
-        """Проверяет ГОСТ HMAC-Стрибог-256 подпись."""
-        if self._gost:
-            return self._gost.verify(data, signature)
-        # Fallback: воссоздаём SHA-256
-        raw = json.dumps(data, sort_keys=True) + NETWORK_SECRET
-        return hashlib.sha256(raw.encode()).hexdigest()[:16] == signature
-
-    def start(self) -> str:
-        self._running = True
-        threading.Thread(target=self._udp_discovery, daemon=True).start()
-        threading.Thread(target=self._tcp_server, daemon=True).start()
-        threading.Thread(target=self._heartbeat_loop, daemon=True).start()
-        if self.redis_bus:
+                self._auth = Auth(load_key())
+            except (OSError, ValueError) as exc:
+                self._auth = None
+                log.warning("P2P disabled: ARGOS_NETWORK_SECRET(_FILE) is unset or weak (%s); "
+                            "networked P2P actions stay off", exc)
+                raise
+            self._config_guard()
+            opened = []
             try:
-                self.redis_bus.start()
-                threading.Thread(target=self._redis_heartbeat_loop, daemon=True).start()
-            except Exception:
-                self.redis_bus = None
-        return (
-            f"🌐 P2P-мост запущен\n"
-            f"   IP:       {self._local_ip}:{P2P_PORT}\n"
-            f"   UDP:      {self._local_ip}:{self.udp_port}\n"
-            f"   Нода ID:  {self.profile.node_id[:8]}...\n"
-            f"   Возраст:  {self.profile.get_age_days():.2f} дней\n"
-            f"   Мощность: {self.profile.get_power()['index']}/100\n"
-            f"   Авторитет:{self.profile.get_authority()}"
-        )
+                tcp = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                opened.append(tcp)
+                tcp.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+                tcp.bind((self.bind_host, self.port))
+                tcp.listen(4)
+                tcp.settimeout(.2)
+                udp = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+                opened.append(udp)
+                udp.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+                udp.bind((self.udp_host, self.udp_port))
+                udp.settimeout(.2)
+                self._tcp, self._udp = tcp, udp
+                self._stop.clear()
+                self._running = True
+                self._threads = [threading.Thread(target=target, daemon=True, name=name)
+                                 for target, name in ((self._tcp_server, 'ArgosP2P-TCP'),
+                                                      (self._udp_discovery, 'ArgosP2P-UDP'))]
+                for thread in self._threads:
+                    thread.start()
+            except BaseException:
+                self._running = False
+                self._stop.set()
+                for sock in opened:
+                    sock.close()
+                for thread in self._threads:
+                    if thread.ident is not None:
+                        thread.join(1)
+                self._tcp = self._udp = None
+                raise
+            return self.network_status()
 
     def stop(self):
-        self._running = False
-        if self.redis_bus:
-            try:
-                self.redis_bus.stop()
-            except Exception:
-                pass
-
-    # ── UDP ОБНАРУЖЕНИЕ (broadcast send + receive) ────────
-    def _udp_discovery(self):
-        """Combined UDP discovery: broadcasts presence and listens for peers.
-
-        Uses a single socket with SO_REUSEADDR + SO_BROADCAST + bind + short
-        timeout so the same socket can both send and receive on BROADCAST_PORT.
-        This is the canonical "out-of-the-box" pattern that works across Linux,
-        macOS and Windows without extra privileges.
-        """
-        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
-        # SO_REUSEPORT lets multiple app instances share the same UDP port
-        if hasattr(socket, "SO_REUSEPORT"):
-            try:
-                sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEPORT, 1)
-            except OSError:
-                pass
-        try:
-            sock.bind((self.udp_host, self.udp_port))
-        except Exception as e:
-            print(f"[P2P UDP]: Не удалось открыть порт {self.udp_port}: {e}")
-            sock.close()
-            return
-        sock.settimeout(UDP_SOCKET_TIMEOUT)
-
-        last_broadcast = 0
-        while self._running:
-            now = time.time()
-            # ── Broadcast heartbeat ──────────────────────────────
-            if now - last_broadcast >= HEARTBEAT_SEC:
+        with self._lifecycle:
+            self._running = False
+            self._stop.set()
+            for sock in (self._tcp, self._udp):
+                if sock:
+                    sock.close()
+            with self._client_lock:
+                clients = list(self._clients)
+            for sock in clients:
                 try:
-                    profile_data = self.profile.to_dict()
-                    payload = json.dumps(
-                        {
-                            "type": "ARGOS_HELLO",
-                            "profile": profile_data,
-                            "sign": self._sign(profile_data),
-                        }
-                    ).encode()
-                    sock.sendto(payload, ("<broadcast>", self.udp_port))
-                    last_broadcast = now
-                except Exception:
+                    sock.shutdown(socket.SHUT_RDWR)
+                except OSError:
                     pass
-            # ── Receive incoming discovery packets ───────────────
-            try:
-                data, addr = sock.recvfrom(4096)
-                msg = json.loads(data.decode())
-                if msg.get("type") != "ARGOS_HELLO":
-                    continue
-                profile = msg.get("profile", {})
-                if profile.get("node_id") == self.profile.node_id:
-                    continue  # Игнорируем себя
-                self.registry.update(profile, addr[0])
-            except socket.timeout:
-                pass  # Dead-peer cleanup is handled by _heartbeat_loop
-            except Exception:
-                pass
-        sock.close()
+                sock.close()
+            end = time.monotonic()+12
+            # Stop accept/discovery first, then snapshot workers: no late worker escapes join.
+            for thread in list(self._threads):
+                if thread.name in ('ArgosP2P-TCP', 'ArgosP2P-UDP') and thread.ident is not None:
+                    thread.join(max(0, end-time.monotonic()))
+            for thread in list(self._threads):
+                if thread is not threading.current_thread() and thread.ident is not None:
+                    thread.join(max(0, end-time.monotonic()))
+            if any(t.is_alive() for t in self._threads):
+                raise RuntimeError('P2P shutdown incomplete')
+            self._threads = []
+            self._tcp = self._udp = None
 
-    # ── TCP СЕРВЕР — принимает запросы от других нод ──────
-    def _tcp_server(self):
-        srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        try:
-            srv.bind(("", P2P_PORT))
-            srv.listen(10)
-        except Exception as e:
-            print(f"[P2P TCP]: Не удалось открыть порт {P2P_PORT}: {e}")
+    def _accept_profile(self, data, address):
+        if not isinstance(data, dict) or not self._allowed(address):
+            raise ValueError('Invalid peer')
+        node_id = data.get('node_id')
+        if not isinstance(node_id, str) or not re.fullmatch(r'[A-Za-z0-9_-]{1,64}', node_id):
+            raise ValueError('Invalid node ID')
+        if node_id == self.profile.node_id:
             return
-        srv.settimeout(2)
-        while self._running:
-            try:
-                conn, addr = srv.accept()
-                threading.Thread(
-                    target=self._handle_client,
-                    args=(conn, addr[0]),
-                    daemon=True,
-                ).start()
-            except socket.timeout:
-                pass
-            except Exception:
-                pass
-        srv.close()
+        if self.registry.count() >= 128 and node_id not in {n['node_id'] for n in self.registry.all()}:
+            raise ValueError('Peer registry full')
+        power = data.get('power', {})
+        if not isinstance(power, dict):
+            raise ValueError('Invalid power metadata')
+        clean = {'node_id': node_id, 'hostname': str(data.get('hostname', 'peer'))[:64],
+                 'role': data.get('role') if data.get('role') in ('worker','server','gateway') else 'worker',
+                 'skills': [], 'port': data.get('port', self.port)}
+        if type(clean['port']) is not int or not 1 <= clean['port'] <= 65535:
+            raise ValueError('Invalid peer port')
+        for key in ('authority', 'age_days'):
+            value = data.get(key, 0)
+            if type(value) not in (int, float) or not 0 <= value <= 1000000:
+                raise ValueError('Invalid peer metric')
+            clean[key] = value
+        clean['power'] = {}
+        for key in ('index', 'ram_gb'):
+            value = power.get(key, 0)
+            if type(value) not in (int, float) or not 0 <= value <= 1000000:
+                raise ValueError('Invalid peer metric')
+            clean['power'][key] = value
+        self.registry.update(clean, address)
 
-    def _handle_client(self, conn: socket.socket, addr: str):
+    def _own_profile(self):
+        return {**self.profile.to_dict(), 'skills': [], 'port': self.port}
+
+    def _receive_discovery(self, raw, address):
+        if len(raw) > 8192 or not self._allowed(address):
+            raise ValueError('Invalid discovery source/size')
+        profile = self._ensure_auth().verify(json.loads(raw), 'discovery')
+        self._accept_profile(profile, address)
+
+    def _udp_discovery(self):
+        sock, next_send = self._udp, 0
+        while not self._stop.is_set():
+            if time.monotonic() >= next_send:
+                try:
+                    packet = canonical(self._auth.pack('discovery', self._own_profile()))
+                    if len(packet) <= 8192:
+                        for target in self._discovery_targets():
+                            try:
+                                sock.sendto(packet, target)
+                            except OSError:
+                                pass
+                except (OSError, ValueError):
+                    pass
+                next_send = time.monotonic()+HEARTBEAT_SEC
+                self.registry.remove_dead()
+            try:
+                raw, address = sock.recvfrom(8193)
+                self._receive_discovery(raw, address[0])
+            except (OSError, ValueError, TypeError, KeyError, RecursionError):
+                pass
+
+    def _tcp_server(self):
+        sock = self._tcp
+        while not self._stop.is_set():
+            try:
+                conn, address = sock.accept()
+            except OSError:
+                continue
+            if self._stop.is_set() or not self._allowed(address[0]) or not self._slots.acquire(blocking=False):
+                conn.close()
+                continue
+            with self._client_lock:
+                self._clients.add(conn)
+            def worker(connection=conn, host=address[0]):
+                try:
+                    self._handle_client(connection, host)
+                finally:
+                    with self._client_lock:
+                        self._clients.discard(connection)
+                    self._slots.release()
+            thread = threading.Thread(target=worker, daemon=True, name='ArgosP2P-client')
+            self._threads = [t for t in self._threads if t.name != 'ArgosP2P-client' or t.is_alive()]
+            self._threads.append(thread)
+            try:
+                thread.start()
+            except Exception:
+                conn.close()
+                with self._client_lock:
+                    self._clients.discard(conn)
+                self._slots.release()
+                self._threads.remove(thread)
+
+    def _query_local(self, prompt):
+        """No tools/commands: one bounded text-only local Ollama request."""
+        model = os.getenv('ARGOS_P2P_OLLAMA_MODEL', os.getenv('OLLAMA_MODEL', ''))
+        if not isinstance(prompt, str) or not 1 <= len(prompt) <= 4096:
+            return {'error': 'invalid_prompt'}
+        if not re.fullmatch(r'[A-Za-z0-9_.:/-]{1,128}', model):
+            return {'error': 'local_model_unconfigured'}
+        connection = http.client.HTTPConnection('127.0.0.1', 11434, timeout=1)
+        socket_holder = []
+        def abort():
+            for sock in socket_holder:
+                try:
+                    sock.shutdown(socket.SHUT_RDWR)
+                except OSError:
+                    pass
+                sock.close()
+        timer = None
         try:
-            raw = conn.recv(65536)
-            msg = json.loads(raw.decode())
+            connection.connect()
+            socket_holder.append(connection.sock)
+            with self._client_lock:
+                self._clients.add(connection.sock)
+            if self._stop.is_set():
+                return {'error': 'stopping'}
+            timer = threading.Timer(8, abort)
+            timer.daemon = True
+            timer.start()
+            connection.sock.settimeout(8)
+            body = canonical({'model': model, 'prompt': prompt, 'stream': False,
+                              'options': {'num_predict': 128}})
+            connection.request('POST', '/api/generate', body=body, headers={'Content-Type':'application/json'})
+            response = connection.getresponse()
+            raw = response.read(32769)
+            if response.status != 200 or len(raw) > 32768:
+                return {'error': 'local_inference_failed'}
+            data = json.loads(raw)
+            answer = data.get('response')
+            if not isinstance(answer, str) or not answer.strip() or not data.get('done') or len(answer) > 8192:
+                return {'error': 'local_inference_incomplete'}
+            return {'answer': answer, 'node_id': self.profile.node_id, 'backend': 'local_ollama'}
+        except Exception:
+            return {'error': 'local_inference_failed'}
+        finally:
+            if timer:
+                timer.cancel()
+                timer.join(1)
+            with self._client_lock:
+                for sock in socket_holder:
+                    self._clients.discard(sock)
+            connection.close()
 
-            # Проверка секрета — поддерживает и ГОСТ-подпись, и plain secret
-            incoming_secret = msg.get("secret", "")
-            gost_sig = msg.get("gost_sign", "")
-            if gost_sig and self._gost:
-                # Новый путь: ГОСТ HMAC-Стрибог проверка
-                check_data = {k: v for k, v in msg.items() if k not in ("gost_sign",)}
-                if not self._gost.verify(check_data, gost_sig):
-                    conn.sendall(json.dumps({"error": "Unauthorized (GOST HMAC)"}).encode())
-                    return
-            elif incoming_secret != NETWORK_SECRET:
-                conn.sendall(json.dumps({"error": "Unauthorized"}).encode())
+    def _handle_client(self, conn, addr):
+        try:
+            if not self._allowed(addr):
                 return
-
-            action = msg.get("action", "query")
-
-            if action == "query":
-                prompt = msg.get("prompt", "")
-                if self.core:
-                    answer = (
-                        self.core._ask_gemini("Ты Аргос.", prompt)
-                        or self.core._ask_ollama("Ты Аргос.", prompt)
-                        or "Нет ответа от ИИ."
-                    )
-                else:
-                    answer = "Ядро не подключено на этой ноде."
-                conn.sendall(
-                    json.dumps(
-                        {
-                            "answer": answer,
-                            "node_id": self.profile.node_id,
-                            "host": self.profile.hostname,
-                        }
-                    ).encode()
-                )
-
-            elif action == "sync_skills":
-                # Запрашивающая нода хочет получить список наших навыков
-                skills = self.profile.get_skills()
-                conn.sendall(json.dumps({"skills": skills}).encode())
-
-            elif action == "get_skill":
-                # Передаём файл навыка
-                skill_name = msg.get("skill", "")
-                path = f"src/skills/{skill_name}.py"
-                if os.path.exists(path) and not skill_name.startswith(".."):
-                    code = open(path, encoding="utf-8").read()
-                    conn.sendall(json.dumps({"code": code, "name": skill_name}).encode())
-                else:
-                    conn.sendall(json.dumps({"error": "Skill not found"}).encode())
-
-            elif action == "status":
-                conn.sendall(json.dumps(self.profile.to_dict()).encode())
-
-        except Exception as e:
-            try:
-                conn.sendall(json.dumps({"error": str(e)}).encode())
-            except Exception:
-                pass
+            packet = recv_frame(conn)
+            message = self._ensure_auth().verify(packet, 'request')
+            action = message.get('action')
+            if action == 'status':
+                result = self._own_profile()
+            elif action == 'query':
+                result = self._query_local(message.get('prompt'))
+            else:
+                result = {'error': 'unsupported_action'}
+            conn.settimeout(2)
+            send_frame(conn, self._auth.pack('response', result, reply_to=packet['nonce']))
+        except Exception:
+            pass  # Fail closed; never reflect raw exceptions or unauthenticated input.
         finally:
             conn.close()
 
-    # ── ПУЛЬС — периодические задачи ─────────────────────
-    def _heartbeat_loop(self):
-        while self._running:
-            time.sleep(HEARTBEAT_SEC)
-            self.registry.remove_dead()
-
-    # ── REDIS HEARTBEAT / STATE SYNC ─────────────────────
-    def _redis_heartbeat_loop(self):
-        while self._running and self.redis_bus:
-            try:
-                payload = {
-                    "profile": self.profile.to_dict(),
-                    "ts": time.time(),
-                }
-                self.redis_bus.publish("state", payload)
-            except Exception:
-                pass
-            time.sleep(HEARTBEAT_SEC)
-
-    def _on_redis_state(self, obj: dict):
+    def _request_peer(self, address, message, port=None):
+        if not self._allowed(address):
+            raise ValueError('Peer outside allowed LAN')
+        auth = self._ensure_auth()
+        packet = auth.pack('request', message)
+        if not self._outbound_slots.acquire(blocking=False):
+            raise ValueError('Outbound P2P connection limit')
+        sock = None
         try:
-            profile = obj.get("profile") or {}
-            if not profile:
-                profile = {
-                    "node_id": obj.get("node_id"),
-                    "role": obj.get("role"),
-                    "power": obj.get("power", {}),
-                    "skills": obj.get("skills", []),
-                    "age_days": obj.get("age_days", 0),
-                }
-            profile["ts"] = obj.get("ts", time.time())
-            self.registry.update(profile, addr=str(profile.get("node_id", "redis")))
-        except Exception:
-            pass
+            sock = socket.create_connection((address, port or self.port), timeout=2)
+            with self._client_lock:
+                self._clients.add(sock)
+            if self._stop.is_set():
+                raise ValueError('P2P is stopping')
+            sock.settimeout(2)
+            send_frame(sock, packet)
+            response = recv_frame(sock, seconds=12)
+        finally:
+            if sock is not None:
+                with self._client_lock:
+                    self._clients.discard(sock)
+                sock.close()
+            self._outbound_slots.release()
+        return auth.verify(response, 'response', reply_to=packet['nonce'])
 
-    # ── ПУБЛИЧНЫЙ API ─────────────────────────────────────
-    def network_status(self) -> str:
-        return self.registry.report(self.profile.to_dict())
+    def network_status(self):
+        self.registry.remove_dead()
+        count = len([n for n in self.registry.all() if n['node_id'] != self.profile.node_id])
+        return (f'P2P transport={"running" if self._running else "stopped"}; '
+                f'bind={self.bind_host}:{self.port}; external_peer_count={count}; '
+                'peer_basis=authenticated_recent; persistent_sessions=0; '
+                'authentication=HMAC-SHA256; encryption=none; skill_transfer=unsupported')
 
-    def route_query(self, prompt: str, task_type: str = None) -> str:
-        """Отправляет AI-запрос на наиболее мощную ноду в сети."""
+    def route_query(self, prompt, task_type=None):
+        self.registry.remove_dead()
         return self.distributor.route_task(prompt, self.core, task_type=task_type)
 
-    def sync_skills_from_network(self) -> str:
-        """Загружает навыки от всех нод в сети."""
-        nodes = self.registry.all()
-        synced = []
-        errors = []
+    def sync_skills_from_network(self):
+        return 'unsupported: automatic peer skill transfer and execution are disabled'
 
-        for node in nodes:
-            addr = node.get("addr")
-            if not addr:
-                continue
-            try:
-                # 1. Получаем список навыков удалённой ноды
-                sock = socket.socket()
-                sock.settimeout(5)
-                sock.connect((addr, P2P_PORT))
-                sock.sendall(
-                    json.dumps({"action": "sync_skills", "secret": NETWORK_SECRET}).encode()
-                )
-                raw = sock.recv(65536)
-                sock.close()
-                remote = json.loads(raw).get("skills", [])
-
-                my_skills = set(self.profile.get_skills())
-
-                # 2. Загружаем отсутствующие навыки
-                for skill in remote:
-                    if skill in my_skills or skill == "evolution":
-                        continue
-                    try:
-                        s2 = socket.socket()
-                        s2.settimeout(8)
-                        s2.connect((addr, P2P_PORT))
-                        s2.sendall(
-                            json.dumps(
-                                {
-                                    "action": "get_skill",
-                                    "skill": skill,
-                                    "secret": NETWORK_SECRET,
-                                }
-                            ).encode()
-                        )
-                        data = json.loads(s2.recv(65536))
-                        s2.close()
-
-                        if "code" in data:
-                            path = f"src/skills/{skill}.py"
-                            with open(path, "w", encoding="utf-8") as f:
-                                f.write(data["code"])
-                            synced.append(f"{skill} ← {node['hostname']}")
-                    except Exception as e:
-                        errors.append(f"{skill}: {e}")
-
-            except Exception as e:
-                errors.append(f"{node.get('hostname', addr)}: {e}")
-
-        result = [f"🔄 СИНХРОНИЗАЦИЯ НАВЫКОВ:"]
-        if synced:
-            result.append(f"  Загружено: {len(synced)}")
-            for s in synced:
-                result.append(f"    ✅ {s}")
-        else:
-            result.append("  Нет новых навыков для загрузки.")
-        if errors:
-            result.append(f"  Ошибки: {len(errors)}")
-        return "\n".join(result)
-
-    def connect_to(self, ip: str) -> str:
-        """Вручную подключиться к известной ноде по IP."""
+    def connect_to(self, ip):
         try:
-            sock = socket.socket()
-            sock.settimeout(5)
-            sock.connect((ip, P2P_PORT))
-            sock.sendall(
-                json.dumps(
-                    {
-                        "action": "status",
-                        "secret": NETWORK_SECRET,
-                    }
-                ).encode()
-            )
-            data = json.loads(sock.recv(65536))
-            sock.close()
-            self.registry.update(data, ip)
-            return (
-                f"✅ Подключён к ноде:\n"
-                f"   Хост:     {data.get('hostname')}\n"
-                f"   ID:       {data.get('node_id','?')[:8]}...\n"
-                f"   Возраст:  {data.get('age_days', 0):.1f} дней\n"
-                f"   Мощность: {data.get('power',{}).get('index',0)}/100\n"
-                f"   Навыки:   {len(data.get('skills',[]))}"
-            )
-        except Exception as e:
-            return f"❌ Не удалось подключиться к {ip}: {e}"
+            data = self._request_peer(ip, {'action': 'status'})
+            self._accept_profile(data, ip)
+            if data.get('node_id') == self.profile.node_id:
+                return 'P2P self connection ignored; ' + self.network_status()
+            return '✅ Authenticated peer registered; ' + self.network_status()
+        except Exception:
+            return '❌ Authenticated peer connection failed'

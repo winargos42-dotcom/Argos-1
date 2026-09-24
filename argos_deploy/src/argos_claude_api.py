@@ -263,11 +263,11 @@ class ArgosClaudeAPI:
                 error=f"Command '{command_name}' not found"
             )
         
-        # Эмуляция выполнения
         return CommandResult(
-            success=True,
+            success=False,
             command=command_name,
-            output=f"Command '{command_name}' ready for execution.\nArgs: {args}\nDescription: {info['description'][:100]}...",
+            output=f"Шаблон команды '{command_name}' найден, выполнение не настроено.\nОписание: {info['description'][:100]}",
+            error="execution_not_configured",
         )
     
     # ═══════════════════════════════════════════════════════

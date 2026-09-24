@@ -3,12 +3,14 @@ voice_manager.py — Унифицированный голосовой мене�
 
 TTS приоритет:
   1) Android TextToSpeech через pyjnius
-  2) plyer.tts
-  3) pyttsx3 (desktop fallback)
+  2) Piper / espeak-ng офлайн через PipeWire (Linux desktop, offline_voice)
+  3) plyer.tts
+  4) pyttsx3 (desktop fallback)
 
 STT приоритет:
   1) Android SpeechRecognizer / RecognizerIntent (pyjnius)
-  2) speech_recognition (Google Speech)
+  2) Vosk офлайн (Linux desktop, offline_voice)
+  3) speech_recognition (Google Speech)
 """
 
 from __future__ import annotations
@@ -154,8 +156,9 @@ class VoiceManager:
     def __init__(self, lang: Optional[str] = None):
         self.lang = lang or DEFAULT_LANG
         self.tts_enabled = True
-        self._backend = self._init_tts_backend()
         self._last_error: Optional[str] = None
+        self._offline_tts = None
+        self._backend = self._init_tts_backend()
         self._sr_recognizer = _sr.Recognizer() if SR_OK else None
         if self._sr_recognizer:
             self._sr_recognizer.energy_threshold = DEFAULT_ENERGY_THRESHOLD
@@ -179,6 +182,17 @@ class VoiceManager:
             except Exception as exc:
                 self._last_error = f"Android TTS init: {exc}"
 
+        if not IS_ANDROID:
+            try:
+                from src.interface.offline_voice import get_tts
+
+                tts = get_tts()
+                if tts.available:
+                    self._offline_tts = tts
+                    return tts.backend  # "piper" | "espeak-ng"
+            except Exception as exc:
+                self._last_error = f"offline TTS init: {exc}"
+
         if PLYER_OK:
             return "plyer"
 
@@ -201,6 +215,11 @@ class VoiceManager:
                 return
             except Exception as exc:  # pragma: no cover - Android only
                 self._last_error = f"TTS android: {exc}"
+        if self._backend in ("piper", "espeak-ng"):
+            if self._offline_tts.speak(text):
+                return
+            self._last_error = f"TTS {self._backend}: {self._offline_tts.last_error}"
+            return
         if self._backend == "plyer":
             try:
                 plyer_tts.speak(text=text, language=self.lang)
@@ -224,6 +243,8 @@ class VoiceManager:
         text = ""
         if IS_ANDROID and JNIUS_OK:
             text = self._listen_android(timeout)
+        if not text and not IS_ANDROID:
+            text = self._listen_vosk(timeout, phrase_limit)
         if not text and SR_OK:
             text = self._listen_speech_recognition(timeout, phrase_limit)
         return text
@@ -260,6 +281,22 @@ class VoiceManager:
             return text or ""
         except Exception as exc:  # pragma: no cover - Android only
             self._last_error = f"Android STT: {exc}"
+            return ""
+
+    def _listen_vosk(self, timeout: float, phrase_limit: float) -> str:
+        """Офлайн STT через Vosk (микрофон PipeWire)."""
+        try:
+            from src.interface.offline_voice import get_stt
+
+            stt = get_stt()
+            if not stt.available:
+                return ""
+            text = stt.listen(timeout=timeout, phrase_limit=phrase_limit)
+            if not text and stt.last_error:
+                self._last_error = stt.last_error
+            return text
+        except Exception as exc:
+            self._last_error = f"Vosk: {exc}"
             return ""
 
     def _listen_speech_recognition(self, timeout: float, phrase_limit: float) -> str:

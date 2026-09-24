@@ -4119,3 +4119,31 @@ After each task return:
 - URL: http://localhost:18765
 
 ## Pi Shutdown вЂ” 2026-06-27 00:54
+
+## Session — 2026-09-19 Linux recovery
+- Action: Restored verified MemPalace/chat backups; configured loopback ARGOS/Ollama user services with linger; repaired P2P port and readonly SQLite memory context.
+- Изменено: deployment peer_autoconnect, mempalace_bridge, core, focused tests, validate workflow, Linux recovery log and session_summary.
+- Проверка: 184 helper tests + 2 subtests; 22 root and 69 runtime tests; independent review without blockers. Verified backup integrity and local MCP authorization.
+- Runtime: /root/argos-runtime; qwen2.5:1.5b; 92918 recovered drawers. Secrets and records outside Git.
+- Remaining: full release coverage, HF write access, Cloudflare OAuth, updated Railway deployment. See 02 Logs/2026-09-19_LinuxRecovery.md.
+
+## Session — 2026-09-19 Local refinement
+- Action: Исправлен поиск по повторяющимся словам; сокращён повторный identity-блок Ollama, постоянные инструкции перенесены перед динамическими данными.
+- Изменено: deployment core/Memory bridge, SQLite/prompt tests, validate.yml, session_summary.md, 02 Logs/2026-09-19_LocalRefinement.md.
+- Проверка: 191 helper + 79 runtime/Ollama + 22 root tests = 292 passed, 2 subtests; independent review PASS. Синтетический стабильный префикс 671→2308 символов; полный release coverage gate сохранён.
+- Runtime: окно Ollama 4096 после обнаруженного усечения3277/2297→1026 приctx2048; таймауты600/660s. Реальный prompt2259 принят целиком. Параметры, измерения и откат сохраняются отдельно в /root/argos-runtime/refinement-manifest.json.
+
+## Session — 2026-09-19 Core correctness
+
+User approved execution of the development roadmap. First bounded iteration adds deterministic arithmetic, literal file command handling, explicit execution outcomes, honest agent/planner reports, and truncate:false for the main Ollama HTTP path. Memory backups and cloud state are preserved. See `02 Logs/2026-09-19_CoreCorrectness.md` for proof, local rollout and remaining limits. Exact generation reserve and the existing 30% application coverage gate remain follow-up work; do not claim the full roadmap or release is complete.
+
+## Session — 2026-09-19 Roadmap continuation
+- Action: implemented indexed memory, separate facts, durable tasks, streaming/cancellation, Russian authenticated panel and verified source installation/rollback.
+- Изменено: deployed core integration, memory/task/control modules, UI, focused tests, release utility, operator guide and roadmap log.
+- Проверка: browser desktop/mobile PASS; API/auth36, focused integration39, task/stream29 and release17 PASS (overlapping suites). Whole-source coverage and live delivery pending; cloud login/domain/devices remain externally blocked.
+
+## Session — 2026-09-23 Local media recovery
+- Action: Preserved installed media/P2P recovery and truthful Claude template errors.
+- Изменено: argos_deploy sources and tests; dated recovery log; session summary.
+- Проверка: eleven focused test files passed individually; media source hashes match live.
+- Remaining: template fix runtime install, external peers, cloud access, full release CI.
