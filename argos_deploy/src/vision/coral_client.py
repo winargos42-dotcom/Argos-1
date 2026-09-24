@@ -97,6 +97,42 @@ class CoralClient:
         return self._call("POST", f"/v1/classify?{query}", image)
 
 
+# Частые классы ImageNet → русский (метки классификатора приходят по-английски).
+# Ключ — по подстроке в нижнем регистре; остальные ~940 классов остаются как есть.
+RU_IMAGENET = {
+    "cat": "кошка", "egyptian cat": "кошка", "tabby": "кошка", "persian cat": "кошка",
+    "dog": "собака", "golden retriever": "собака", "labrador": "собака", "puppy": "щенок",
+    "macaw": "попугай", "parrot": "попугай", "hen": "курица", "goldfish": "рыбка",
+    "coffee mug": "кружка", "cup": "чашка", "coffeepot": "кофейник", "teapot": "чайник",
+    "water bottle": "бутылка", "wine bottle": "бутылка", "pop bottle": "бутылка",
+    "laptop": "ноутбук", "notebook": "ноутбук", "desktop computer": "компьютер",
+    "computer keyboard": "клавиатура", "typewriter keyboard": "клавиатура", "mouse": "мышь",
+    "cellular telephone": "телефон", "cellphone": "телефон", "ipod": "плеер", "remote control": "пульт",
+    "monitor": "монитор", "screen": "экран", "television": "телевизор",
+    "desk": "стол", "dining table": "стол", "chair": "стул", "folding chair": "стул",
+    "couch": "диван", "studio couch": "диван", "bookcase": "шкаф", "wardrobe": "шкаф",
+    "refrigerator": "холодильник", "microwave": "микроволновка", "toaster": "тостер",
+    "washer": "стиральная машина", "vacuum": "пылесос", "lamp": "лампа", "table lamp": "лампа",
+    "book": "книга", "envelope": "конверт", "pencil": "карандаш", "ballpoint": "ручка",
+    "plate": "тарелка", "bowl": "миска", "wooden spoon": "ложка", "spatula": "лопатка",
+    "banana": "банан", "orange": "апельсин", "lemon": "лимон", "apple": "яблоко",
+    "pizza": "пицца", "espresso": "кофе", "military uniform": "военная форма",
+    "sunglasses": "очки", "backpack": "рюкзак", "purse": "сумка", "wallet": "кошелёк",
+    "running shoe": "кроссовок", "sandal": "сандаля", "digital watch": "часы", "analog clock": "часы",
+    "umbrella": "зонт", "flowerpot": "горшок", "vase": "ваза", "candle": "свеча",
+}
+
+
+def ru_label(label: str) -> str:
+    low = label.lower()
+    if low in RU_IMAGENET:
+        return RU_IMAGENET[low]
+    for key, rus in RU_IMAGENET.items():  # по подстроке: «tabby, tabby cat» → кошка
+        if key in low:
+            return rus
+    return label
+
+
 def summarize(result: dict) -> str:
     objects = result.get("objects") or []
     where = "TPU" if result.get("tpu") else "CPU"

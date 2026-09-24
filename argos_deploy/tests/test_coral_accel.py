@@ -301,3 +301,13 @@ def test_camera_analysis_without_coral(monkeypatch):
 
     monkeypatch.delenv("ARGOS_CORAL_URL", raising=False)
     assert V.ArgosVision.coral_detect(np.zeros((4, 4, 3), dtype=np.uint8)) is None
+
+
+# ── русские метки классификации ──────────────────────────
+def test_ru_label():
+    from src.vision.coral_client import ru_label
+    assert ru_label("Egyptian cat") == "кошка"
+    assert ru_label("tabby, tabby cat") == "кошка"
+    assert ru_label("macaw") == "попугай"
+    assert ru_label("military uniform") == "военная форма"
+    assert ru_label("some_unknown_class_xyz") == "some_unknown_class_xyz"

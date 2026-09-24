@@ -69,11 +69,13 @@ def handle(text: str, core=None) -> str | None:
             n = len(result.get("objects") or [])
             return f"🙂 Coral: лиц в кадре — {n} ({result.get('inference_ms', '?')} мс)."
         if re.search(_CLASSIFY, t):
+            from src.vision.coral_client import ru_label
+
             r = _client().classify(_frame_jpeg(core))
             labels = r.get("labels") or []
             if not labels:
                 return f"🔎 Coral: не удалось определить предмет ({r.get('inference_ms', '?')} мс)."
-            top = ", ".join(f"{o['label']} ({o['score']:.0%})" for o in labels[:3])
+            top = ", ".join(f"{ru_label(o['label'])} ({o['score']:.0%})" for o in labels[:3])
             return f"🔎 Coral: это {top} ({r.get('inference_ms', '?')} мс на TPU)."
         if re.search(_LOOK, t):
             return summarize(_client().detect(_frame_jpeg(core), model="objects"))
