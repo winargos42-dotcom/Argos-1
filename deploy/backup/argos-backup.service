@@ -1,0 +1,10 @@
+[Unit]
+Description=ARGOS: ночной бэкап X230 на узел argos-coral
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/root/argos-runtime/deploy/backup/argos-backup.sh
+Nice=10
+IOSchedulingClass=idle
