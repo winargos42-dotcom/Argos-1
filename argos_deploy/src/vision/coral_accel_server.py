@@ -52,6 +52,11 @@ MODELS = {
     "faces": ("ssd_mobilenet_v2_face_quant_postprocess_edgetpu.tflite",
               "ssd_mobilenet_v2_face_quant_postprocess.tflite", None),
 }
+# Классификаторы (один выходной тензор вероятностей): MobileNet v2 ImageNet (1001 класс)
+CLASSIFY_MODELS = {
+    "classify": ("mobilenet_v2_1.0_224_quant_edgetpu.tflite",
+                 "mobilenet_v2_1.0_224_quant.tflite", "imagenet_labels.txt"),
+}
 
 
 def read_labels(path: str | None) -> dict[int, str]:
@@ -167,7 +172,49 @@ class Detector:
                 "input": [int(self.width), int(self.height)], "tpu": self.edgetpu}
 
 
-def load_detectors(models_dir: str, edgetpu: bool, factory=_interpreter) -> dict[str, Detector]:
+class Classifier:
+    """Классификатор с одним выходным тензором вероятностей (MobileNet ImageNet)."""
+
+    def __init__(self, name: str, model_path: str, labels: dict[int, str], edgetpu: bool = True,
+                 interpreter_factory=_interpreter):
+        self.name, self.model_path, self.labels, self.edgetpu = name, model_path, labels, edgetpu
+        self.interp = interpreter_factory(model_path, edgetpu)
+        detail = self.interp.get_input_details()[0]
+        self.input_index = detail["index"]
+        _, self.height, self.width, _ = detail["shape"]
+        self.input_dtype = detail["dtype"]
+        out = self.interp.get_output_details()[0]
+        self.output_index = out["index"]
+        self.out_scale, self.out_zero = out.get("quantization", (0.0, 0))[:2]
+        self.lock = threading.Lock()
+        self.calls, self.total_ms = 0, 0.0
+
+    def classify(self, image, top_k: int = 5, threshold: float = 0.1) -> dict:
+        import numpy as np
+
+        resized = image.convert("RGB").resize((int(self.width), int(self.height)))
+        tensor = np.expand_dims(np.asarray(resized, dtype=self.input_dtype), 0)
+        with self.lock:
+            started = time.perf_counter()
+            self.interp.set_tensor(self.input_index, tensor)
+            self.interp.invoke()
+            scores = np.asarray(self.interp.get_tensor(self.output_index)).reshape(-1).astype(np.float32)
+            elapsed = (time.perf_counter() - started) * 1000
+            self.calls += 1
+            self.total_ms += elapsed
+        if self.out_scale:  # деквантизация uint8 → вероятность
+            scores = (scores - self.out_zero) * self.out_scale
+        order = scores.argsort()[::-1][:max(1, top_k)]
+        labels = [{"label": self.labels.get(int(i), str(int(i))), "score": round(float(scores[i]), 3)}
+                  for i in order if float(scores[i]) >= threshold]
+        return {"model": self.name, "tpu": self.edgetpu, "inference_ms": round(elapsed, 2), "labels": labels}
+
+    def stats(self) -> dict:
+        return {"calls": self.calls, "avg_ms": round(self.total_ms / self.calls, 2) if self.calls else None,
+                "input": [int(self.width), int(self.height)], "tpu": self.edgetpu, "kind": "classify"}
+
+
+def load_detectors(models_dir: str, edgetpu: bool, factory=_interpreter) -> dict:
     detectors = {}
     for name, (tpu_file, cpu_file, labels_file) in MODELS.items():
         path = os.path.join(models_dir, tpu_file if edgetpu else cpu_file)
@@ -177,6 +224,14 @@ def load_detectors(models_dir: str, edgetpu: bool, factory=_interpreter) -> dict
         labels = read_labels(os.path.join(models_dir, labels_file) if labels_file else None)
         detectors[name] = Detector(name, path, labels, edgetpu, factory)
         log.info("Модель %s загружена (%s)", name, "Edge TPU" if edgetpu else "CPU")
+    for name, (tpu_file, cpu_file, labels_file) in CLASSIFY_MODELS.items():
+        path = os.path.join(models_dir, tpu_file if edgetpu else cpu_file)
+        if not os.path.isfile(path):
+            log.warning("Модель %s не найдена: %s", name, path)
+            continue
+        labels = read_labels(os.path.join(models_dir, labels_file) if labels_file else None)
+        detectors[name] = Classifier(name, path, labels, edgetpu, factory)
+        log.info("Классификатор %s загружен (%s)", name, "Edge TPU" if edgetpu else "CPU")
     return detectors
 
 
@@ -237,11 +292,30 @@ class AccelService:
                 image = decode_image(body)
             except Exception as e:
                 return 400, {"error": f"плохой кадр или параметры: {e}"}, nonce
+            if not isinstance(detector, Detector):
+                return 404, {"error": f"{name} — не детектор (используй /v1/classify)"}, nonce
             try:
                 return 200, detector.detect(image, threshold, top_k), nonce
             except Exception as e:
                 log.exception("Ошибка детекции")
                 return 500, {"error": f"ошибка детекции: {e}"}, nonce
+        if method == "POST" and path == "/v1/classify":
+            query = parse_qs(urlsplit(target).query)
+            name = (query.get("model") or ["classify"])[0]
+            classifier = self.detectors.get(name)
+            if not isinstance(classifier, Classifier):
+                return 404, {"error": f"классификатор {name} не загружен"}, nonce
+            try:
+                threshold = min(max(float((query.get("threshold") or ["0.1"])[0]), 0.0), 0.99)
+                top_k = min(max(int((query.get("top_k") or ["5"])[0]), 1), 20)
+                image = decode_image(body)
+            except Exception as e:
+                return 400, {"error": f"плохой кадр или параметры: {e}"}, nonce
+            try:
+                return 200, classifier.classify(image, top_k, threshold), nonce
+            except Exception as e:
+                log.exception("Ошибка классификации")
+                return 500, {"error": f"ошибка классификации: {e}"}, nonce
         return 404, {"error": "not found"}, nonce
 
 
@@ -285,15 +359,16 @@ def parse_bind(value: str) -> tuple[str, int]:
     return host or "127.0.0.1", int(port)
 
 
-def benchmark(detectors: dict[str, Detector], name: str, runs: int) -> None:
+def benchmark(detectors: dict, name: str, runs: int) -> None:
     from PIL import Image
 
     detector = detectors[name]
+    run = detector.classify if isinstance(detector, Classifier) else detector.detect
     image = Image.new("RGB", (640, 480), (90, 120, 150))
-    detector.detect(image)  # первый вызов загружает модель в TPU
+    run(image)  # первый вызов загружает модель в TPU
     times = []
     for _ in range(runs):
-        times.append(detector.detect(image)["inference_ms"])
+        times.append(run(image)["inference_ms"])
     times.sort()
     print(f"{name}: {'Edge TPU' if detector.edgetpu else 'CPU'}, {runs} прогонов, "
           f"медиана {times[len(times) // 2]:.2f} мс, мин {times[0]:.2f} мс, макс {times[-1]:.2f} мс")

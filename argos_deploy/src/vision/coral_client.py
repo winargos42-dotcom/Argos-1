@@ -90,6 +90,12 @@ class CoralClient:
         query = urlencode({"model": model, "threshold": f"{threshold:.2f}", "top_k": int(top_k)})
         return self._call("POST", f"/v1/detect?{query}", image)
 
+    def classify(self, image: bytes, model: str = "classify", threshold: float = 0.1, top_k: int = 5) -> dict:
+        if not image:
+            raise ValueError("пустой кадр")
+        query = urlencode({"model": model, "threshold": f"{threshold:.2f}", "top_k": int(top_k)})
+        return self._call("POST", f"/v1/classify?{query}", image)
+
 
 def summarize(result: dict) -> str:
     objects = result.get("objects") or []

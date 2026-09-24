@@ -125,10 +125,56 @@ def test_detector_maps_boxes_to_pixels():
     assert make_detector().stats()["calls"] == 0
 
 
+# ── классификатор ────────────────────────────────────────
+class FakeClsInterp:
+    def get_input_details(self):
+        return [{"index": 0, "shape": np.array([1, 224, 224, 3]), "dtype": np.uint8}]
+
+    def get_output_details(self):
+        # квантованный выход uint8: scale 1/255, zero 0
+        return [{"index": 9, "quantization": (1 / 255, 0)}]
+
+    def set_tensor(self, index, tensor):
+        assert tensor.shape == (1, 224, 224, 3) and tensor.dtype == np.uint8
+
+    def invoke(self):
+        pass
+
+    def get_tensor(self, index):
+        v = np.zeros((1, 4), dtype=np.uint8)
+        v[0, 2] = 230  # класс 2 самый вероятный
+        v[0, 0] = 20
+        return v
+
+
+def make_classifier():
+    labels = {0: "фон", 1: "кошка", 2: "кружка", 3: "стул"}
+    return srv.Classifier("classify", "fake.tflite", labels, True, lambda *_: FakeClsInterp())
+
+
+def test_classifier_topk_and_dequant():
+    r = make_classifier().classify(Image.new("RGB", (640, 480)), top_k=3, threshold=0.1)
+    assert r["model"] == "classify" and r["tpu"] is True
+    assert r["labels"][0] == {"label": "кружка", "score": 0.902}
+    assert [o["label"] for o in r["labels"]] == ["кружка"]  # только класс выше порога 0.1
+    assert make_classifier().stats()["kind"] == "classify"
+
+
 # ── сервис: доступ, подпись, ошибки ──────────────────────
 @pytest.fixture
 def service():
-    return srv.AccelService(KEY, {"objects": make_detector()})
+    return srv.AccelService(KEY, {"objects": make_detector(), "classify": make_classifier()})
+
+
+def test_signed_classify_and_wrong_route(service):
+    def call(target, body):
+        return service.handle("127.0.0.1", "POST", target, proto.sign_request(KEY, "POST", target, body), body)
+
+    status, payload, nonce = call("/v1/classify?top_k=3", jpeg())
+    assert status == 200 and payload["labels"][0]["label"] == "кружка"
+    # классификатор нельзя дёргать как детектор и наоборот
+    assert call("/v1/classify?model=objects", jpeg())[0] == 404
+    assert call("/v1/detect?model=classify", jpeg())[0] == 404
 
 
 def test_health_is_public_but_lan_only(service):

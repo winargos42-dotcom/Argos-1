@@ -20,6 +20,7 @@ SKILL_DESCRIPTION = "Детекция объектов и лиц на Coral Edge
 _CORAL = r"(корал\w*|coral)"
 _STATUS = rf"({_CORAL}\W+(статус|status|состояние)|(статус|состояние)\W+{_CORAL})"
 _FACES = rf"{_CORAL}\W+(\w+\W+)?лиц\w*"
+_CLASSIFY = rf"({_CORAL}\W+(что\W+это|классифиц\w*|распознай\W+предмет|что\W+за\W+предмет)|классифиц\w+\W+{_CORAL})"
 _LOOK = rf"(что\W+(видит|видишь)\W+{_CORAL}|{_CORAL}\W+(что\W+видишь|посмотри|кто\W+в\W+кадре|камера|объекты))"
 
 
@@ -67,6 +68,13 @@ def handle(text: str, core=None) -> str | None:
             result = _client().detect(_frame_jpeg(core), model="faces", threshold=0.5)
             n = len(result.get("objects") or [])
             return f"🙂 Coral: лиц в кадре — {n} ({result.get('inference_ms', '?')} мс)."
+        if re.search(_CLASSIFY, t):
+            r = _client().classify(_frame_jpeg(core))
+            labels = r.get("labels") or []
+            if not labels:
+                return f"🔎 Coral: не удалось определить предмет ({r.get('inference_ms', '?')} мс)."
+            top = ", ".join(f"{o['label']} ({o['score']:.0%})" for o in labels[:3])
+            return f"🔎 Coral: это {top} ({r.get('inference_ms', '?')} мс на TPU)."
         if re.search(_LOOK, t):
             return summarize(_client().detect(_frame_jpeg(core), model="objects"))
     except Exception as e:  # узел недоступен/не настроен — честно говорим, модель не выдумывает
