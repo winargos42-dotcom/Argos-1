@@ -47,7 +47,7 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
           # Для пуша нужен полный fetch
@@ -70,8 +70,10 @@ jobs:
 
       - name: Stage files
         if: steps.check_changes.outputs.has_changes == 'true'
+        env:
+          REQUESTED_FILES: ${{ github.event.inputs.files }}
         run: |
-          FILES="${{ github.event.inputs.files }}"
+          FILES="$REQUESTED_FILES"
           if [ -n "$FILES" ]; then
             for f in $FILES; do
               if [ -e "$f" ]; then
@@ -104,8 +106,10 @@ jobs:
         if: >
           steps.check_changes.outputs.has_changes == 'true' &&
           steps.check_staged.outputs.staged == 'true'
+        env:
+          REQUESTED_MESSAGE: ${{ github.event.inputs.commit_message }}
         run: |
-          MSG="${{ github.event.inputs.commit_message }}"
+          MSG="$REQUESTED_MESSAGE"
           if [ -z "$MSG" ]; then
             MSG="chore: автоматический коммит изменений [skip ci]"
           fi
@@ -116,16 +120,22 @@ jobs:
         if: >
           steps.check_changes.outputs.has_changes == 'true' &&
           steps.check_staged.outputs.staged == 'true'
+        env:
+          REQUESTED_BRANCH: ${{ github.event.inputs.branch }}
         run: |
-          BRANCH="${{ github.event.inputs.branch }}"
+          BRANCH="$REQUESTED_BRANCH"
           if [ -z "$BRANCH" ]; then
             BRANCH="${{ github.ref_name }}"
           fi
           git push origin "$BRANCH"
           echo "🚀 Изменения запушены в ветку: $BRANCH"
+          echo "### AutoPush: pushed changes to $BRANCH" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Nothing to push
         if: >
           steps.check_changes.outputs.has_changes == 'false' ||
           steps.check_staged.outputs.staged == 'false'
-        run: echo "✅ Репозиторий актуален, пуш не требуется."
+        run: |
+          echo "::notice title=AutoPush no-op::No working-tree changes were found; no commit or push was performed."
+          echo "### AutoPush: no changes" >> "$GITHUB_STEP_SUMMARY"
+          echo "No files changed in the checked-out GitHub runner; no commit or push was performed." >> "$GITHUB_STEP_SUMMARY"
