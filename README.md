@@ -1206,3 +1206,14 @@ consciousness-module tests, then publishes a Markdown report to a GitHub Gist.
 | **(B)** `python health_check.py` | Checks core ARGOS files, modules, and AI engines |
 | **(C)** `pytest tests/test_consciousness_module.py -v` | Runs consciousness-module tests (falls back to `pytest tests -q` if the file is missing) |
 | Publish | Updates `argos_report.md` in Gist `8e9cf57e043c7a6111f277828f363b01` via GitHub REST API |
+
+<!-- ARGOS_CANONICAL_LINKS_BEGIN -->
+## Публичные ссылки ARGOS
+
+- Основной проект: https://github.com/winargos42-dotcom/argos
+- Профили владельца: [GitHub](https://github.com/winargos42-dotcom) · [Hugging Face](https://huggingface.co/AvaSiG)
+- Основной Telegram-бот: https://t.me/Argosssbot
+- Модель и данные: [ARGOS-MUKHTAR](https://huggingface.co/AvaSiG/ARGOS-MUKHTAR) · [MUKHTAR-Bench](https://huggingface.co/datasets/AvaSiG/MUKHTAR-Bench)
+- Экспериментальный [ARGOS-MUKHTAR-Lab Space](https://huggingface.co/spaces/AvaSiG/ARGOS-MUKHTAR-Lab): при проверке 30.10.2026 — **PAUSED**.
+- [Политика конфиденциальности ARGOS](https://winargos42-dotcom.github.io/argos-play-store/) — отдельный сайт политики конфиденциальности.
+<!-- ARGOS_CANONICAL_LINKS_END -->
